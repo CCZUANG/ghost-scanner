@@ -41,7 +41,7 @@ def get_sp500_tickers():
         tickers = [t.replace('.', '-') for t in tickers]
         return tickers
     except:
-        # 備用清單，防止爬蟲失敗
+        # 備用清單
         return ['TSM', 'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'NFLX', 'PLTR', 'LUNR']
 
 def get_ghost_metrics(symbol, vol_threshold):
@@ -63,5 +63,97 @@ def get_ghost_metrics(symbol, vol_threshold):
         sma20 = close.rolling(window=20).mean().iloc[-1]
         trend_up = current_price > sma20
         
-        # 2. 波動 (HV Rank)
-        log_ret = np.log(close / close.shift(
+        # 2. 波動 (HV Rank) --- 這裡是之前報錯的地方，已修復 ---
+        log_ret = np.log(close / close.shift(1))
+        
+        vol_30d = log_ret.rolling(window=30).std() * np.sqrt(252) * 100
+        current_hv = vol_30d.iloc[-1]
+        min_hv = vol_30d.min()
+        max_hv = vol_30d.max()
+        
+        if max_hv == min_hv: return None
+        hv_rank = ((current_hv - min_hv) / (max_hv - min_hv)) * 100
+        
+        # --- C. 型態判別 (Pattern Recognition) ---
+        pattern = "📈 穩健上漲" # 預設值
+        
+        # 計算布林通道
+        std20 = close.rolling(window=20).std().iloc[-1]
+        upper_band = sma20 + (2 * std20)
+        lower_band = sma20 - (2 * std20)
+        
+        # 指標 1: 布林帶寬 (Bandwidth)
+        bb_width = (upper_band - lower_band) / sma20
+        
+        # 指標 2: 乖離率 (Bias)
+        bias_pct = (current_price - sma20) / sma20
+        
+        # --- 判斷邏輯 ---
+        
+        # 1. 判斷【極度壓縮】
+        if bb_width < 0.15:
+            pattern = "🧊 極度壓縮 (關注!)"
+            
+        # 2. 判斷【回測支撐】
+        elif 0 < bias_pct < 0.02:
+            pattern = "📉 回測支撐 (買點)"
+            
+        # 3. 判斷【強勢突破】
+        elif current_price > upper_band:
+            pattern = "🚀 強勢突破 (慎追)"
+
+        return {
+            "代號": symbol,
+            "現價": round(current_price, 2),
+            "HV Rank": round(hv_rank, 1),
+            "趨勢": "✅" if trend_up else "❌",
+            "型態特徵": pattern,
+            "日均量": f"{round(avg_volume/1000000, 1)}M"
+        }
+    except:
+        return None
+
+# --- 4. 主程式執行邏輯 ---
+
+if st.button("🚀 開始掃描", type="primary"):
+    status_text = "正在下載 S&P 500 清單..."
+    progress_bar = st.progress(0)
+    
+    with st.status(status_text, expanded=True) as status:
+        tickers = get_sp500_tickers()
+        target_tickers = tickers[:scan_limit]
+        
+        status.write(f"🔍 掃描中... (條件：日均量 > {min_vol_m}M 且 HV Rank < {hv_threshold})")
+        
+        results = []
+        for i, ticker in enumerate(target_tickers):
+            data = get_ghost_metrics(ticker, min_volume_threshold)
+            
+            # 篩選
+            if data and data['趨勢'] == "✅" and data['HV Rank'] < hv_threshold:
+                results.append(data)
+            
+            progress_bar.progress((i + 1) / len(target_tickers))
+            
+        status.update(label="掃描完成！", state="complete", expanded=False)
+
+    # --- 5. 顯示結果 ---
+    if results:
+        df_results = pd.DataFrame(results)
+        df_results = df_results.sort_values(by="HV Rank")
+        
+        st.success(f"🎯 發現 {len(df_results)} 檔標的！請特別關注標註「🧊」或「📉」的股票。")
+        
+        st.dataframe(
+            df_results,
+            column_config={
+                "HV Rank": st.column_config.NumberColumn("波動位階", format="%.1f"),
+                "現價": st.column_config.NumberColumn(format="$%.2f"),
+                "型態特徵": st.column_config.TextColumn("K線型態 (重點)", help="🧊=壓縮準備噴發, 📉=回檔低接"),
+                "日均量": st.column_config.TextColumn("成交量")
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+    else:
+        st.warning("無符合條件標的，請放寬 HV Rank 門檻或降低日均量。")
