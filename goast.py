@@ -9,9 +9,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (手機友善版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (優化版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (手機友善版)")
+st.title("👻 幽靈策略掃描器 (優化版)")
 st.write("""
 **策略目標**：鎖定 **日線多頭 + 4H U型**，點擊代號可開外部連結，或在下方直接檢視 **互動式 K 線**。
 """)
@@ -69,24 +69,19 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# --- 繪圖函數 (強制深色背景，確保白線可見) ---
+# --- 改進版繪圖函數 ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     
     # 建立頁籤
     tab1, tab2 = st.tabs(["📅 日線圖 (Daily)", "⏱️ 4小時圖 (4H)"])
     
-    # 共用的圖表佈局設定 (強制深色背景)
-    layout_settings = dict(
-        yaxis_title="股價", 
+    # 移除強制黑色背景，讓它自動適應 Streamlit 主題
+    layout_common = dict(
         xaxis_rangeslider_visible=False,
         height=450, 
         margin=dict(l=10, r=10, t=30, b=10),
-        paper_bgcolor='rgb(17,17,17)',  # 強制背景為深色
-        plot_bgcolor='rgb(17,17,17)',   # 強制繪圖區為深色
-        font=dict(color='white'),       # 文字強制為白色
-        xaxis=dict(showgrid=True, gridcolor='rgb(50,50,50)'), # 網格線顏色
-        yaxis=dict(showgrid=True, gridcolor='rgb(50,50,50)')
+        # 這裡移除了 paper_bgcolor 等強制設定
     )
 
     # --- Tab 1: 日線圖 ---
@@ -97,25 +92,31 @@ def plot_interactive_chart(symbol):
                 st.warning("日線數據不足")
             else:
                 df_d['MA20'] = df_d['Close'].rolling(window=20).mean()
-                df_d['MA60'] = df_d['Close'].rolling(window=60).mean() # 季線
+                df_d['MA60'] = df_d['Close'].rolling(window=60).mean()
+                
+                # 【優化】只取最近 150 天，讓 K 棒寬一點
+                df_d_view = df_d.iloc[-150:]
 
                 fig_d = go.Figure()
                 fig_d.add_trace(go.Candlestick(
-                    x=df_d.index, open=df_d['Open'], high=df_d['High'],
-                    low=df_d['Low'], close=df_d['Close'], name='K線'
+                    x=df_d_view.index, open=df_d_view['Open'], high=df_d_view['High'],
+                    low=df_d_view['Low'], close=df_d_view['Close'], name='K線'
                 ))
+                # MA20 改藍色細線
                 fig_d.add_trace(go.Scatter(
-                    x=df_d.index, y=df_d['MA20'], mode='lines', name='MA20 (月線)',
-                    line=dict(color='orange', width=1)
+                    x=df_d_view.index, y=df_d_view['MA20'], mode='lines', name='MA20 (月線)',
+                    line=dict(color='royalblue', width=1)
                 ))
-                # MA60 白色
+                # 【修改】MA60 改橘色粗線
                 fig_d.add_trace(go.Scatter(
-                    x=df_d.index, y=df_d['MA60'], mode='lines', name='MA60 (季線)',
-                    line=dict(color='white', width=2)
+                    x=df_d_view.index, y=df_d_view['MA60'], mode='lines', name='MA60 (季線)',
+                    line=dict(color='orange', width=3)
                 ))
                 
-                # 套用深色佈局
-                fig_d.update_layout(title=f"{symbol} 日線趨勢", **layout_settings)
+                fig_d.update_layout(title=f"{symbol} 日線趨勢 (MA60=橘色)", yaxis_title="股價", **layout_common)
+                # 移除週末空檔，讓圖形更緊湊
+                fig_d.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                
                 st.plotly_chart(fig_d, use_container_width=True)
         except Exception as e:
             st.error(f"日線圖錯誤: {e}")
@@ -134,7 +135,9 @@ def plot_interactive_chart(symbol):
 
                 df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
                 df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
-                df_4h_view = df_4h.iloc[-120:] 
+                
+                # 【優化】只顯示最近 80 根 K 棒，解決擁擠問題
+                df_4h_view = df_4h.iloc[-80:] 
 
                 fig_4h = go.Figure()
                 fig_4h.add_trace(go.Candlestick(
@@ -143,15 +146,17 @@ def plot_interactive_chart(symbol):
                     low=df_4h_view['Low'], close=df_4h_view['Close'], 
                     name='4H K線'
                 ))
-                # MA60 白色
+                # 【修改】MA60 改橘色粗線
                 fig_4h.add_trace(go.Scatter(
                     x=df_4h_view.index, y=df_4h_view['MA60'], 
                     mode='lines', name='MA60 (策略生命線)',
-                    line=dict(color='white', width=2)
+                    line=dict(color='orange', width=3)
                 ))
                 
-                # 套用深色佈局
-                fig_4h.update_layout(title=f"{symbol} 4小時圖 (檢視 U 型)", **layout_settings)
+                fig_4h.update_layout(title=f"{symbol} 4小時圖 (MA60=橘色)", yaxis_title="股價", **layout_common)
+                # 移除週末空檔
+                fig_4h.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                
                 st.plotly_chart(fig_4h, use_container_width=True)
                 
         except Exception as e:
@@ -349,4 +354,4 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         if selected_option:
             selected_symbol = selected_option.split(" - ")[0]
             plot_interactive_chart(selected_symbol)
-            st.markdown(f"**操作提示：**\n* **白色線** = 60MA (季線/生命線)\n* 圖表已強制設定為深色模式，確保手機版可見白線。")
+            st.markdown(f"**顏色說明：**\n* 🟠 **橘色粗線** = MA60 (季線/生命線)\n* 🔵 **藍色細線** = MA20 (月線)")
