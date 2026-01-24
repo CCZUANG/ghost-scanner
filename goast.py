@@ -9,11 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (完美K線版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (客製版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (完美K線版)")
+st.title("👻 幽靈策略掃描器 (客製版)")
 st.write("""
-**策略目標**：鎖定 **日線多頭 + 4H U型**，4H 圖表採用無縫模式，修復線圖斷裂與空隙問題。
+**策略目標**：鎖定 **日線多頭 + 4H U型**，HV極低波動篩選，4H圖表預設顯示 160 根K線。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -30,8 +30,10 @@ check_daily_ma60_up = st.sidebar.checkbox("✅ 必須：日線 60MA 向上", val
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 必須：股價 > 日線 60MA", value=True)
 
 st.sidebar.header("⚙️ 基礎篩選")
-hv_threshold = st.sidebar.slider("HV Rank 門檻 (越低越好)", 10, 100, 65)
-min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 20, 3) 
+# 【修改 1】HV 預設改為 30
+hv_threshold = st.sidebar.slider("HV Rank 門檻 (越低越好)", 10, 100, 30)
+# 【修改 2】成交量預設改為 10M (上限拉高到 100M 以便調整)
+min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, 10) 
 min_volume_threshold = min_vol_m * 1000000
 
 st.sidebar.header("📈 4小時 U型戰法")
@@ -69,7 +71,7 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# --- 改進版繪圖函數 (4H 改用 Category Axis 修復斷裂) ---
+# --- 改進版繪圖函數 ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     
@@ -170,10 +172,10 @@ def plot_interactive_chart(symbol):
         except Exception as e:
             st.error(f"日線圖錯誤: {e}")
 
-    # --- Tab 3: 4小時圖 (關鍵修復) ---
+    # --- Tab 3: 4小時圖 (Category Axis + 160根) ---
     with tab3:
         try:
-            # 1. 載入完整數據
+            # 載入完整數據
             df_1h = stock.history(period="6mo", interval="1h")
             if len(df_1h) < 100:
                 st.warning("4H 數據不足")
@@ -186,13 +188,11 @@ def plot_interactive_chart(symbol):
                 df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
                 df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
 
-                # 【關鍵修復】將 Index 轉為字串，強制使用 Category Axis
-                # 這會讓 Plotly 把它們當作 "第1根, 第2根..." 來畫，完全忽略時間空隙
+                # 強制轉字串索引，修復空隙
                 df_4h['date_str'] = df_4h.index.strftime('%m-%d %H:%M')
 
                 fig_4h = go.Figure()
                 
-                # 使用 date_str 作為 X 軸
                 fig_4h.add_trace(go.Candlestick(
                     x=df_4h['date_str'], 
                     open=df_4h['Open'], high=df_4h['High'],
@@ -203,7 +203,7 @@ def plot_interactive_chart(symbol):
                     x=df_4h['date_str'], y=df_4h['MA20'], 
                     mode='lines', name='MA20',
                     line=dict(color='royalblue', width=1),
-                    connectgaps=True # 雙重保險，確保連線
+                    connectgaps=True
                 ))
                 fig_4h.add_trace(go.Scatter(
                     x=df_4h['date_str'], y=df_4h['MA60'], 
@@ -214,13 +214,11 @@ def plot_interactive_chart(symbol):
                 
                 fig_4h.update_layout(title=get_title_config(f"{symbol} 4小時圖"), yaxis_title="股價", **layout_common)
                 
-                # 【視角鎖定】
-                # 因為改用 Category Axis，這裡的 range 要用「數量索引」 (例如從第 500 根到最後一根)
+                # 【修改 3】預設顯示最後 160 根
                 total_bars = len(df_4h)
-                zoom_start = max(0, total_bars - 80) # 顯示最後 80 根
+                zoom_start = max(0, total_bars - 160) 
                 zoom_end = total_bars
                 
-                # type='category' 是關鍵，它會移除所有空隙
                 fig_4h.update_xaxes(type='category', range=[zoom_start, zoom_end])
                 
                 st.plotly_chart(fig_4h, use_container_width=True, config=config_common)
@@ -419,4 +417,4 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     if selected_option:
         selected_symbol = selected_option.split(" - ")[0]
         plot_interactive_chart(selected_symbol)
-        st.markdown(f"**操作提示：**\n* 4H 線圖已升級為 **「無縫模式」**，線條保證連續，無虛線斷裂。\n* 預設顯示最後 80 根 K 棒，**往左滑動** 即可查看歷史走勢。")
+        st.markdown(f"**操作提示：**\n* 4H 圖預設顯示最後 **160根**，可平移查看歷史。\n* 篩選標準：HV < **30**，日均量 > **1000萬股**。")
