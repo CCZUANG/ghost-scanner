@@ -23,7 +23,7 @@ min_volume_threshold = min_vol_m * 1000000
 st.sidebar.header("📈 4小時 60MA 戰法")
 only_ma_flip = st.sidebar.checkbox("✅ 嚴格篩選「微笑轉折」", value=True, help="只顯示 MA60 呈現 U 型反轉 (左跌右漲) 的股票")
 
-# 【修改點】這裡將上限從 10.0 改成 50.0，讓您可以選得更寬
+# 這裡已保留您的需求：上限設為 50.0
 dist_threshold = st.sidebar.slider("🎯 距離 60MA 範圍 (%)", 0.0, 50.0, 5.0, step=0.5, help="股價距離 60MA 多近？(上限已放寬至 50%)")
 
 st.sidebar.markdown("---")
@@ -35,13 +35,4 @@ st.sidebar.info("💡 **圖形辨識邏輯**：\n程式會檢查過去 5 根 4H 
 def get_sp500_tickers():
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0"}
     try:
-        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        response = requests.get(url, headers=headers)
-        sp500_df = pd.read_html(StringIO(response.text))[0]
-        tickers = sp500_df['Symbol'].tolist()
-        tickers = [t.replace('.', '-') for t in tickers]
-        return tickers
-    except:
-        return ['TSM', 'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'NFLX', 'PLTR', 'LUNR', 'COIN']
-
-def get_ghost_metrics(
+        url = '
