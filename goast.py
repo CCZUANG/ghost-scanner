@@ -9,29 +9,55 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (策略導引版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (策略整合版)", page_icon="👻", layout="wide")
 
 st.title("👻 幽靈策略掃描器")
 
-# --- 【新增】幽靈策略步驟說明 ---
+# --- 2. 核心策略導引區 (User 指定加入內容) ---
 st.write("**策略目標**：鎖定 **日線多頭 + 4H U型**，尋找「結冰區」起漲點，並透過動態期權組合鎖定利潤。")
 
-with st.expander("📖 檢視「幽靈策略」動態蝴蝶演化步驟"):
-    st.markdown("""
-    ### 👻 幽靈策略核心步驟
-    1. **Step 1 (初始測試)**: 
-       - **動作**：買進 低價位 Call，同時賣出 高一階 Call (組成牛市價差 Bull Call Spread)。
-       - **目的**：用於低成本試探，若掃描器發現 **HV 結冰且貼近 MA60** 時進場。
-       - **防守**：若判斷失敗，執行規則 1 儘快平倉。
-    2. **Step 2 (趨勢加碼)**: 
-       - **動作**：當股價上漲、趨勢出現但尚未超過賣出價時，**買進更高一階的 Call**。
-       - **目的**：利用浮盈加碼，追求波動性擴張帶來的利潤。
-    3. **Step 3 (鎖定利潤)**: 
-       - **動作**：股價繼續上漲超過最高階 Call 時，**再賣出一個中間價位的 Call**。
-       - **型態**：此時轉化為 **穩賺的蝴蝶型態 (Iron Butterfly/Butterfly)**，等待結算鎖定獲利。
-    """)
+# 使用 Expander 讓介面保持整潔，但預設展開以便閱讀
+with st.expander("📖 幽靈策略：動態蝴蝶演化步驟", expanded=True):
+    col_step1, col_step2, col_step3 = st.columns(3)
+    
+    with col_step1:
+        st.subheader("第一步：建立試探部位")
+        st.markdown("""
+        **🚀 啟動時機**：正股放量突破關鍵壓力或回測支撐成功時。  
+        **動作**：買進 **低價位 Call** + 賣出 **高一階 Call** (多頭價差)。  
+        **成功指標**：股價站穩成本區，Delta 隨價格上升穩定增加。  
+        **❌ 失敗判定**：
+        - **時間**：進場後 2 個交易日股價橫盤。
+        - **空間**：跌破支撐位或總損失超過 3 點。
+        """)
+        
+    with col_step2:
+        st.subheader("第二步：動能加碼")
+        st.markdown("""
+        **🚀 啟動時機**：價差已產生「浮盈」，且股價衝向賣出價時。  
+        **動作**：加買 **更高一階的 Call**。  
+        **成功指標**：IV 顯著擴張（水結成冰），部位體積因波動迅速膨脹。  
+        **❌ 失敗判定**：
+        - **動能**：股價觸及賣出價後轉頭跌破成本區。
+        - **波動**：IV 下降（冰塊融化），加碼 Call 價值停滯。
+        """)
+        
+    with col_step3:
+        st.subheader("第三步：轉化蝴蝶")
+        st.markdown("""
+        **🚀 啟動時機**：股價強勢漲破加碼價，且出現過熱訊號時。  
+        **動作**：**再加賣一張中間價位的 Call** (總計賣出兩張)。  
+        **成功指標**：轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本（穩賺）。  
+        **❌ 失敗判定**：
+        - **爆量**：異常天量且價格停滯，三天內分批清空。
+        - **結算**：價格遠超最高階且未見拉回，應獲利了結。
+        """)
 
-# --- 2. 側邊欄：參數設定區 ---
+    st.info("💡 **核心注意事項**：Step 2 的靈魂在於 **IV 擴張**（水結成冰）。只有在價差部位已「證明你是對的」時才能執行 Rule 2 加碼。")
+
+st.markdown("---")
+
+# --- 3. 側邊欄：參數設定區 ---
 st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio(
     "選擇掃描市場", 
@@ -45,7 +71,9 @@ check_daily_ma60_up = st.sidebar.checkbox("✅ 必須：日線 60MA 向上", val
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 必須：股價 > 日線 60MA", value=True)
 
 st.sidebar.header("⚙️ 基礎篩選")
+# 【預設調整】HV 預設 30
 hv_threshold = st.sidebar.slider("HV Rank 門檻 (越低越好)", 10, 100, 30)
+# 【預設調整】最小日均量 10M
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, 10) 
 min_volume_threshold = min_vol_m * 1000000
 
@@ -63,7 +91,7 @@ else:
 st.sidebar.markdown("---")
 max_workers = st.sidebar.slider("🚀 平行運算核心數", 1, 32, 16)
 
-# --- 3. 輔助與核心函數 ---
+# --- 4. 輔助與核心函數 ---
 
 INDUSTRY_MAP = {
     "technology": "科技業", "software": "軟體", "semiconductors": "半導體",
@@ -101,13 +129,11 @@ def plot_interactive_chart(symbol):
 
     config_common = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
-    # --- Tab 1: 周線圖 ---
+    # --- Tab 1: 周線 ---
     with tab1:
         try:
             df_w = stock.history(period="5y", interval="1wk")
-            if len(df_w) < 60:
-                st.warning("周線數據不足")
-            else:
+            if len(df_w) > 60:
                 df_w['MA20'] = df_w['Close'].rolling(window=20).mean()
                 df_w['MA60'] = df_w['Close'].rolling(window=60).mean()
                 fig_w = go.Figure()
@@ -118,15 +144,13 @@ def plot_interactive_chart(symbol):
                 if len(df_w) > 100:
                     fig_w.update_xaxes(range=[df_w.index[-100], df_w.index[-1] + pd.Timedelta(weeks=1)])
                 st.plotly_chart(fig_w, use_container_width=True, config=config_common)
-        except: pass
+        except: st.error("圖表載入失敗")
 
-    # --- Tab 2: 日線圖 ---
+    # --- Tab 2: 日線 ---
     with tab2:
         try:
             df_d = stock.history(period="2y")
-            if len(df_d) < 60:
-                st.warning("日線數據不足")
-            else:
+            if len(df_d) > 60:
                 df_d['MA20'] = df_d['Close'].rolling(window=20).mean()
                 df_d['MA60'] = df_d['Close'].rolling(window=60).mean()
                 fig_d = go.Figure()
@@ -137,28 +161,25 @@ def plot_interactive_chart(symbol):
                 if len(df_d) > 150:
                     fig_d.update_xaxes(range=[df_d.index[-150], df_d.index[-1] + pd.Timedelta(days=2)], rangebreaks=[dict(bounds=["sat", "mon"])])
                 st.plotly_chart(fig_d, use_container_width=True, config=config_common)
-        except: pass
+        except: st.error("圖表載入失敗")
 
-    # --- Tab 3: 4小時圖 (Category Axis) ---
+    # --- Tab 3: 4小時 (預設 160 根) ---
     with tab3:
         try:
             df_1h = stock.history(period="6mo", interval="1h")
-            if len(df_1h) < 100:
-                st.warning("4H 數據不足")
-            else:
-                df_4h = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
-                df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
-                df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
-                df_4h['date_str'] = df_4h.index.strftime('%m-%d %H:%M')
-                fig_4h = go.Figure()
-                fig_4h.add_trace(go.Candlestick(x=df_4h['date_str'], open=df_4h['Open'], high=df_4h['High'], low=df_4h['Low'], close=df_4h['Close'], name='4H K'))
-                fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1), connectgaps=True))
-                fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True))
-                fig_4h.update_layout(title=get_title_config(f"{symbol} 4小時圖"), yaxis_title="股價", **layout_common)
-                total_bars = len(df_4h)
-                fig_4h.update_xaxes(type='category', range=[max(0, total_bars - 160), total_bars])
-                st.plotly_chart(fig_4h, use_container_width=True, config=config_common)
-        except: pass
+            df_4h = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
+            df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
+            df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
+            df_4h['date_str'] = df_4h.index.strftime('%m-%d %H:%M')
+            fig_4h = go.Figure()
+            fig_4h.add_trace(go.Candlestick(x=df_4h['date_str'], open=df_4h['Open'], high=df_4h['High'], low=df_4h['Low'], close=df_4h['Close'], name='4H K'))
+            fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1), connectgaps=True))
+            fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True))
+            fig_4h.update_layout(title=get_title_config(f"{symbol} 4小時圖"), yaxis_title="股價", **layout_common)
+            total_bars = len(df_4h)
+            fig_4h.update_xaxes(type='category', range=[max(0, total_bars - 160), total_bars])
+            st.plotly_chart(fig_4h, use_container_width=True, config=config_common)
+        except: st.error("圖表載入失敗")
 
 @st.cache_data(ttl=3600)
 def get_sp500_tickers():
@@ -223,28 +244,31 @@ def get_ghost_metrics(symbol, vol_threshold):
         }
     except: return None
 
-# --- 4. 執行邏輯與顯示 ---
+# --- 5. 執行邏輯與顯示 ---
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     st.session_state['scan_results'] = None
-    with st.status("正在掃描中...", expanded=True) as status:
+    with st.status("正在依據幽靈策略掃描標的...", expanded=True) as status:
         tickers = list(set(get_sp500_tickers() + get_nasdaq100_tickers()))[:scan_limit]
         results = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_ticker = {executor.submit(get_ghost_metrics, t, min_volume_threshold): t for t in tickers}
-            for i, future in enumerate(as_completed(future_to_ticker)):
+            for future in as_completed(future_to_ticker):
                 data = future.result()
                 if data: results.append(data)
         st.session_state['scan_results'] = results
-        status.update(label=f"完成！發現 {len(results)} 檔標的。", state="complete", expanded=False)
+        status.update(label=f"掃描完成！發現 {len(results)} 檔符合「結冰區」標的。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank", ascending=True)
+    st.subheader("📋 符合 Step 1 條件標的清單")
     st.dataframe(df, column_config={
         "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*)"),
         "連結": None, "_sort_score": None,
         "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍")
     }, hide_index=True, use_container_width=True)
+    
     st.markdown("---")
-    selected_option = st.selectbox("選擇股票檢視 K 線:", df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist())
+    st.subheader("🕯️ 三週期 K 線檢視")
+    selected_option = st.selectbox("選擇股票:", df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist())
     if selected_option:
         plot_interactive_chart(selected_option.split(" - ")[0])
