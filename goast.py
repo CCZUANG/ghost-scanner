@@ -7,29 +7,35 @@ from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (Turbo急速版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (雙市場版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (Turbo急速版)")
+st.title("👻 幽靈策略掃描器 (雙市場版)")
 st.write("""
-**策略目標**：多核心平行運算，極速尋找 **「4小時 60MA 完美 U 型反轉」**。
+**策略目標**：在 **S&P 500** 與 **NASDAQ 100** 中，尋找「4小時 60MA 完美 U 型反轉」的起漲點。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
-st.sidebar.header("⚙️ 基礎篩選")
-# 為了證明速度，預設數量直接拉高
-scan_limit = st.sidebar.slider("1. 掃描數量 (前 N 大)", 50, 500, 300, help="開啟多核心後，300檔也能很快掃完")
-hv_threshold = st.sidebar.slider("2. HV Rank 門檻", 10, 90, 60)
-min_vol_m = st.sidebar.slider("3. 最小日均量 (百萬股)", 1, 20, 3) 
+st.sidebar.header("🎯 市場與數量")
+# 新增：市場選擇
+market_choice = st.sidebar.radio(
+    "選擇掃描市場", 
+    ["S&P 500 (大型股)", "NASDAQ 100 (科技股)", "🔥 全火力 (兩者全掃)"],
+    index=2
+)
+scan_limit = st.sidebar.slider("掃描數量 (前 N 大)", 50, 600, 200)
+
+st.sidebar.header("⚙️ 篩選條件")
+hv_threshold = st.sidebar.slider("HV Rank 門檻", 10, 90, 65)
+min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 20, 3) 
 min_volume_threshold = min_vol_m * 1000000
 
 st.sidebar.header("📈 4小時 U型戰法")
-dist_threshold = st.sidebar.slider("🎯 距離 60MA 範圍 (%)", 0.0, 50.0, 8.0, step=0.5)
+dist_threshold = st.sidebar.slider("距離 60MA 範圍 (%)", 0.0, 50.0, 8.0, step=0.5)
 u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 60, 30)
 min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
 
 st.sidebar.markdown("---")
-# 新增執行緒設定
-max_workers = st.sidebar.slider("🚀 平行運算核心數", 1, 32, 16, help="數字越大跑越快，但設太大可能會被 Yahoo 擋 IP，建議 10-20")
+max_workers = st.sidebar.slider("🚀 平行運算核心數", 1, 32, 16)
 
 # --- 3. 核心函數 ---
 
@@ -37,17 +43,51 @@ max_workers = st.sidebar.slider("🚀 平行運算核心數", 1, 32, 16, help="�
 def get_sp500_tickers():
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        url = (
-            "https://en.wikipedia.org/wiki/"
-            "List_of_S%26P_500_companies"
-        )
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
         response = requests.get(url, headers=headers)
-        sp500_df = pd.read_html(StringIO(response.text))[0]
-        tickers = sp500_df['Symbol'].tolist()
-        tickers = [t.replace('.', '-') for t in tickers]
-        return tickers
+        df = pd.read_html(StringIO(response.text))[0]
+        tickers = df['Symbol'].tolist()
+        return [t.replace('.', '-') for t in tickers]
     except:
-        return ['TSM', 'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'NFLX', 'PLTR', 'LUNR', 'COIN', 'MSTR']
+        return []
+
+@st.cache_data(ttl=3600)
+def get_nasdaq100_tickers():
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        url = "https://en.wikipedia.org/wiki/Nasdaq-100"
+        response = requests.get(url, headers=headers)
+        # Wikipedia 結構可能會變，通常是 table[4] 或找含有 'Ticker' 的表格
+        dfs = pd.read_html(StringIO(response.text))
+        for df in dfs:
+            if 'Ticker' in df.columns:
+                tickers = df['Ticker'].tolist()
+                return [t.replace('.', '-') for t in tickers]
+            elif 'Symbol' in df.columns:
+                tickers = df['Symbol'].tolist()
+                return [t.replace('.', '-') for t in tickers]
+        return []
+    except:
+        return []
+
+def get_combined_tickers(choice, limit):
+    sp500 = []
+    nasdaq = []
+    
+    if "S&P" in choice or "全火力" in choice:
+        sp500 = get_sp500_tickers()
+    
+    if "NASDAQ" in choice or "全火力" in choice:
+        nasdaq = get_nasdaq100_tickers()
+    
+    # 合併並去除重複 (例如 AAPL, NVDA 都在兩邊，只需掃一次)
+    combined = list(set(sp500 + nasdaq))
+    
+    # 如果網路爬蟲失敗，回傳備用名單
+    if not combined:
+        return ['TSM', 'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'NFLX', 'PLTR', 'LUNR', 'COIN', 'MSTR', 'QQQ', 'SPY']
+    
+    return combined[:limit]
 
 def analyze_u_shape(ma_series):
     try:
@@ -56,12 +96,12 @@ def analyze_u_shape(ma_series):
         coeffs = np.polyfit(x, y, 2)
         a, b, c = coeffs
         
-        if a <= 0: return False, 0 # 倒U或直線
+        if a <= 0: return False, 0
         
         vertex_x = -b / (2 * a)
         len_window = len(y)
         
-        # 寬鬆一點的谷底判定，抓最近的趨勢
+        # 谷底位置判定
         if not (len_window * 0.3 <= vertex_x <= len_window * 1.1):
             return False, a
             
@@ -75,14 +115,11 @@ def analyze_u_shape(ma_series):
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
-        
-        # 優化：一次抓取 3 個月的 1h 數據，日線數據從這裡面 resample 出來即可
-        # 這樣可以少發送一次網路請求，速度更快
         df_1h = stock.history(period="3mo", interval="1h")
         
         if len(df_1h) < 240: return None
 
-        # 1. 計算日均量 (用 1h 數據合成日線來算)
+        # 1. 計算日均量
         df_daily_synth = df_1h.resample('D').agg({'Volume': 'sum'})
         avg_volume = df_daily_synth['Volume'].rolling(window=20).mean().iloc[-1]
         
@@ -98,30 +135,22 @@ def get_ghost_metrics(symbol, vol_threshold):
 
         df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
         
-        # 取出這段時間的 MA 數據進行擬合
         ma_segment = df_4h['MA60'].iloc[-u_sensitivity:]
         if ma_segment.isnull().values.any() or len(ma_segment) < u_sensitivity: return None
         
-        # --- 核心演算法：U 型檢測 ---
+        # --- U 型檢測 ---
         is_u_shape, curvature = analyze_u_shape(ma_segment)
         
         if not is_u_shape: return None
         if curvature < min_curvature: return None
         
-        # 乖離率檢查
         current_price = df_4h['Close'].iloc[-1]
         ma60_now = ma_segment.iloc[-1]
         dist_pct = ((current_price - ma60_now) / ma60_now) * 100
         
         if abs(dist_pct) > dist_threshold: return None 
 
-        # 計算排序分數
         u_score = (curvature * 1000) - (abs(dist_pct) * 0.5)
-
-        # 計算 HV Rank (簡單版)
-        # 用 4H 的波動率來估算
-        log_ret = np.log(df_4h['Close'] / df_4h['Close'].shift(1))
-        current_hv = log_ret.rolling(window=30).std().iloc[-1] * 100 * 2 # 粗略放大
 
         return {
             "代號": symbol,
@@ -136,42 +165,37 @@ def get_ghost_metrics(symbol, vol_threshold):
     except:
         return None
 
-# --- 4. 主程式執行邏輯 (多執行緒版) ---
+# --- 4. 主程式執行邏輯 ---
 
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
-    status_text = "正在下載 S&P 500 清單..."
+    status_text = f"正在下載 {market_choice} 清單..."
     progress_bar = st.progress(0)
     
     with st.status(status_text, expanded=True) as status:
-        tickers = get_sp500_tickers()
-        target_tickers = tickers[:scan_limit]
+        target_tickers = get_combined_tickers(market_choice, scan_limit)
         
         status.write(f"🔥 Turbo 模式啟動！ (核心數: {max_workers})")
-        status.write(f"🔍 掃描中... 目標: {len(target_tickers)} 檔")
+        status.write(f"🔍 目標: {len(target_tickers)} 檔股票 | 來自: {market_choice}")
         
         results = []
         completed_count = 0
         total_count = len(target_tickers)
         
-        # 使用 ThreadPoolExecutor 進行並行處理
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任務
             future_to_ticker = {
                 executor.submit(get_ghost_metrics, t, min_volume_threshold): t 
                 for t in target_tickers
             }
             
-            # 當任務完成時處理結果
             for future in as_completed(future_to_ticker):
                 data = future.result()
                 if data:
                     results.append(data)
                 
                 completed_count += 1
-                # 更新進度條
                 progress_bar.progress(completed_count / total_count)
             
-        status.update(label=f"掃描完成！耗時極短，共掃描 {total_count} 檔。", state="complete", expanded=False)
+        status.update(label=f"掃描完成！共發現 {len(results)} 檔。", state="complete", expanded=False)
 
     if results:
         df_results = pd.DataFrame(results)
@@ -184,7 +208,6 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
             column_config={
                 "U型強度": st.column_config.ProgressColumn(
                     "U型分數", 
-                    help="數值越高越彎，型態越漂亮",
                     min_value=0, max_value=20, format="%.1f"
                 ),
                 "現價": st.column_config.NumberColumn(format="$%.2f"),
@@ -198,4 +221,4 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
             use_container_width=True
         )
     else:
-        st.warning("⚠️ 沒掃到符合條件的股票。\n建議：\n1. 降低「最小彎曲度」\n2. 擴大「距離 60MA 範圍」")
+        st.warning("⚠️ 沒掃到符合條件的股票。\n建議：\n1. 擴大「距離 60MA 範圍」\n2. 降低「最小彎曲度」")
