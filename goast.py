@@ -11,7 +11,7 @@ from datetime import datetime
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="幽靈策略掃描器 (2026)", page_icon="👻", layout="wide")
 
-# 初始化 Session State
+# 初始化 Session State (記憶還原系統)
 if 'scan_limit' not in st.session_state: st.session_state.scan_limit = 600 
 if 'min_vol_m' not in st.session_state: st.session_state.min_vol_m = 10
 if 'dist_threshold' not in st.session_state: st.session_state.dist_threshold = 8.0
@@ -34,7 +34,6 @@ def handle_u_logic_toggle():
         st.session_state.scan_limit = 600
         st.session_state.min_vol_m = 1
         st.session_state.dist_threshold = 50.0
-        # 【修改】啟動時自動跳轉至新的最大值 120
         st.session_state.u_sensitivity = 120
     else:
         st.session_state.scan_limit = st.session_state.backup['scan_limit']
@@ -45,8 +44,8 @@ def handle_u_logic_toggle():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 ---
-with st.expander("📖 幽靈策略：動態蝴蝶演化步驟 (詳細準則)", expanded=True):
+# --- 2. 核心策略導引區 (預設收合 expanded=False) ---
+with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
     
     with col_step1:
@@ -96,14 +95,13 @@ min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vo
 dist_threshold = st.sidebar.slider("距離 MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
 
 if enable_u_logic:
-    # 【修改】上限擴大至 120
-    u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 120, key='u_sensitivity')
+    u_sensitivity = st.sidebar.slider("U型敏感度", 20, 120, key='u_sensitivity')
     min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
 else:
     u_sensitivity, min_curvature = 30, 0.003
 max_workers = st.sidebar.slider("🚀 平行核心數", 1, 32, 16)
 
-# --- 4. 產業翻譯 ---
+# --- 4. 產業翻譯字典 ---
 INDUSTRY_MAP = {
     "technology": "科技", "software": "軟體服務", "semiconductors": "半導體",
     "financial": "金融銀行", "healthcare": "醫療保健", "biotechnology": "生物科技",
@@ -121,11 +119,19 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 ---
+# --- 5. 核心繪圖函數 (修正：dragmode=False 方便手機捲動) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
-    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"), dragmode='pan')
+    
+    # 【手機優化】dragmode=False 鎖定拖曳，避免手機滑動頁面時卡在圖表
+    layout = dict(
+        xaxis_rangeslider_visible=False, 
+        height=600, 
+        margin=dict(l=10, r=10, t=50, b=50), 
+        legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"), 
+        dragmode=False  # 預設鎖定，需點擊工具列 pan 才能移動
+    )
     config = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
     with tab1: # 周線 (max)
@@ -195,7 +201,6 @@ def get_ghost_metrics(symbol, vol_threshold):
         
         u_score = -abs(dist_pct)
         if enable_u_logic:
-            # 使用擴充後的 sensitivity
             y = df_4h['MA60'].tail(u_sensitivity).values; coeffs = np.polyfit(np.arange(len(y)), y, 2)
             if coeffs[0] > 0 and (len(y)*0.3 <= -coeffs[1]/(2*coeffs[0]) <= len(y)*1.1) and (y[-1]-y[-2]) > 0 and coeffs[0] >= min_curvature:
                 u_score = (coeffs[0] * 1000) - (abs(dist_pct) * 0.5)
@@ -263,7 +268,9 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         "題材搜尋": st.column_config.LinkColumn("題材與風險", display_text="🔍 查詢"),
         "_sort_score": None
     }, hide_index=True, use_container_width=True)
+    
     st.markdown("---")
+    st.info("💡 手機操作提示：圖表預設為鎖定狀態以利網頁捲動。如需平移或縮放 K 線，請點擊圖表右上角工具列的「十字箭頭 (Pan)」圖示解鎖。")
     st.subheader("🕯️ 三週期 K 線檢視")
     selected = st.selectbox("選擇標的:", df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist())
     if selected: plot_interactive_chart(selected.split(" - ")[0])
