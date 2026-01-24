@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import requests
-import plotly.graph_objects as go # 引入繪圖庫
+import plotly.graph_objects as go
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -50,7 +50,6 @@ max_workers = st.sidebar.slider("🚀 平行運算核心數", 1, 32, 16)
 
 # --- 3. 輔助與核心函數 ---
 
-# 產業翻譯
 INDUSTRY_MAP = {
     "technology": "科技業", "software": "軟體", "semiconductors": "半導體",
     "financial": "金融", "banks": "銀行", "credit": "信貸",
@@ -70,60 +69,39 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# 繪製 K 線圖函數
 def plot_interactive_chart(symbol):
     try:
         stock = yf.Ticker(symbol)
-        # 抓取 1 年日線數據
         df = stock.history(period="1y")
-        
         if len(df) < 60:
             st.error("數據不足，無法繪圖")
             return
 
-        # 計算均線
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['MA60'] = df['Close'].rolling(window=60).mean()
 
-        # 建立 Plotly 圖表
         fig = go.Figure()
-
-        # 1. K線圖
         fig.add_trace(go.Candlestick(
-            x=df.index,
-            open=df['Open'], high=df['High'],
-            low=df['Low'], close=df['Close'],
-            name='K線'
+            x=df.index, open=df['Open'], high=df['High'],
+            low=df['Low'], close=df['Close'], name='K線'
         ))
-
-        # 2. MA20 (月線)
         fig.add_trace(go.Scatter(
-            x=df.index, y=df['MA20'],
-            mode='lines', name='MA20 (月線)',
+            x=df.index, y=df['MA20'], mode='lines', name='MA20 (月線)',
             line=dict(color='orange', width=1)
         ))
-
-        # 3. MA60 (季線 - 生命線)
         fig.add_trace(go.Scatter(
-            x=df.index, y=df['MA60'],
-            mode='lines', name='MA60 (季線)',
+            x=df.index, y=df['MA60'], mode='lines', name='MA60 (季線)',
             line=dict(color='green', width=2)
         ))
-
-        # 設定版面
         fig.update_layout(
             title=f"{symbol} 日線圖 (含 MA20/MA60)",
-            yaxis_title="股價 (USD)",
-            xaxis_rangeslider_visible=False, # 隱藏下方滑桿以節省空間
-            height=500,
-            margin=dict(l=20, r=20, t=40, b=20)
+            yaxis_title="股價 (USD)", xaxis_rangeslider_visible=False,
+            height=500, margin=dict(l=20, r=20, t=40, b=20)
         )
-
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.error(f"繪圖發生錯誤: {e}")
 
-# 爬蟲函數
 @st.cache_data(ttl=3600)
 def get_sp500_tickers():
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -176,7 +154,6 @@ def get_ghost_metrics(symbol, vol_threshold):
         df_1h = stock.history(period="6mo", interval="1h")
         if len(df_1h) < 240: return None
 
-        # 日線數據合成
         df_daily_synth = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
         df_daily_synth['MA60'] = df_daily_synth['Close'].rolling(window=60).mean()
         if len(df_daily_synth) < 60: return None
@@ -190,7 +167,6 @@ def get_ghost_metrics(symbol, vol_threshold):
 
         if df_daily_synth['Volume'].rolling(window=20).mean().iloc[-1] < vol_threshold: return None
 
-        # HV Rank
         close_daily = df_daily_synth['Close']
         log_ret = np.log(close_daily / close_daily.shift(1))
         vol_30d = log_ret.rolling(window=30).std() * np.sqrt(252) * 100
@@ -200,7 +176,6 @@ def get_ghost_metrics(symbol, vol_threshold):
         hv_rank = ((current_hv - min_hv) / (max_hv - min_hv)) * 100
         if hv_rank > hv_threshold: return None
 
-        # 4H 數據
         df_4h = df_1h.resample('4h').agg({'Close': 'last', 'Volume': 'sum'}).dropna()
         if len(df_4h) < 60: return None
         df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
@@ -235,7 +210,7 @@ def get_ghost_metrics(symbol, vol_threshold):
 
         return {
             "代號": symbol,
-            "連結": f"https://finance.yahoo.com/quote/{symbol}", # 這是給 LinkColumn 用的
+            "連結": f"https://finance.yahoo.com/quote/{symbol}", 
             "HV Rank": round(hv_rank, 1),
             "現價": round(current_price_4h, 2),
             "4H 60MA": round(ma60_now_4h, 2),
@@ -250,7 +225,7 @@ def get_ghost_metrics(symbol, vol_threshold):
 # --- 4. 主程式執行邏輯 ---
 
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
-    st.session_state['scan_results'] = None # 重置
+    st.session_state['scan_results'] = None
     status_text = f"正在下載 {market_choice} 清單..."
     progress_bar = st.progress(0)
     
@@ -269,9 +244,9 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
                 progress_bar.progress(completed_count / len(target_tickers))
         
         status.update(label=f"掃描完成！共發現 {len(results)} 檔。", state="complete", expanded=False)
-        st.session_state['scan_results'] = results # 存入 session_state 以便重繪
+        st.session_state['scan_results'] = results
 
-# --- 5. 顯示結果與 K 線圖 ---
+# --- 5. 顯示結果 ---
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df_results = pd.DataFrame(st.session_state['scan_results'])
@@ -279,18 +254,18 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     
     st.success(f"🎯 發現 {len(df_results)} 檔優質標的！")
 
-    # === 表格顯示區 ===
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.subheader("📋 掃描結果列表")
         column_config = {
+            # 【修復重點】這裡使用 regex 讓它只顯示網址最後面的代號
             "代號": st.column_config.LinkColumn(
                 "代號 (點擊開Yahoo)", 
-                display_text="代號", 
+                display_text="https://finance\\.yahoo\\.com/quote/(.*)", 
                 help="點擊代號直接開啟 Yahoo Finance 網頁"
             ),
-            "連結": None, # 隱藏原始連結欄位
+            "連結": None, 
             "HV Rank": st.column_config.NumberColumn("HV波動", format="%.1f"),
             "現價": st.column_config.NumberColumn(format="$%.2f"),
             "4H 60MA": st.column_config.NumberColumn("4H 季線", format="$%.2f"),
@@ -301,9 +276,9 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             "_sort_score": None
         }
         
-        # 這裡把連結欄位指定給代號，讓代號變成超連結
         df_display = df_results.copy()
-        df_display["代號"] = df_display["連結"] # 把連結賦值給代號欄位 (Streamlit Trick)
+        # 將「連結」欄位的 URL 填入「代號」欄位，配合上面的 Regex 顯示
+        df_display["代號"] = df_display["連結"] 
         
         st.dataframe(
             df_display,
@@ -312,22 +287,13 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             use_container_width=True
         )
 
-    # === K線圖顯示區 ===
     with col2:
         st.subheader("🕯️ K線檢視器")
         st.info("👇 在下方選單選擇股票，直接查看 K 線與 60MA")
-        
-        # 製作選單 (顯示 代號 + 產業)
         select_options = df_results.apply(lambda x: f"{x['代號'].split('/')[-1]} - {x['產業']}", axis=1).tolist()
-        
-        # 讓使用者選擇
         selected_option = st.selectbox("選擇股票:", select_options)
         
         if selected_option:
-            # 取出代號 (例如 "NVDA - 半導體" -> "NVDA")
             selected_symbol = selected_option.split(" - ")[0]
-            
-            # 繪製圖表
             plot_interactive_chart(selected_symbol)
-            
             st.markdown(f"**觀察重點：**\n* 檢查日線 **60MA (綠線)** 是否向上？\n* 檢查股價是否剛回測綠線並出現紅K？")
