@@ -7,11 +7,11 @@ from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (最終版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (彈性版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (最終版)")
+st.title("👻 幽靈策略掃描器 (彈性版)")
 st.write("""
-**策略目標**：尋找 **S&P 500 / NASDAQ 100** 中，符合 **U型反轉** 且 **確認有期權** 的標的。
+**策略目標**：尋找 **S&P 500 / NASDAQ 100** 中，符合 **低波動** 且 **貼近 4H 60MA** 的標的。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -27,10 +27,20 @@ st.sidebar.header("⚙️ 篩選條件")
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 20, 3) 
 min_volume_threshold = min_vol_m * 1000000
 
+# --- 【新增功能】U型戰法開關 ---
 st.sidebar.header("📈 4小時 U型戰法")
+enable_u_logic = st.sidebar.checkbox("✅ 啟用「U型數學擬合」過濾", value=True, help="打勾：嚴格篩選完美 U 型。\n取消：只篩選乖離率，不看形狀。")
+
 dist_threshold = st.sidebar.slider("距離 60MA 範圍 (%)", 0.0, 50.0, 8.0, step=0.5)
-u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 60, 30)
-min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
+
+# 只有在啟用時才顯示細部參數 (優化介面)
+if enable_u_logic:
+    u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 60, 30)
+    min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
+else:
+    # 給定預設值以免報錯
+    u_sensitivity = 30
+    min_curvature = 0.003
 
 st.sidebar.markdown("---")
 max_workers = st.sidebar.slider("🚀 平行運算核心數", 1, 32, 16)
@@ -61,20 +71,4 @@ def get_nasdaq100_tickers():
                 tickers = df['Ticker'].tolist()
                 return [t.replace('.', '-') for t in tickers]
             elif 'Symbol' in df.columns:
-                tickers = df['Symbol'].tolist()
-                return [t.replace('.', '-') for t in tickers]
-        return []
-    except:
-        return []
-
-def get_combined_tickers(choice, limit):
-    sp500 = []
-    nasdaq = []
-    
-    if "S&P" in choice or "全火力" in choice:
-        sp500 = get_sp500_tickers()
-    
-    if "NASDAQ" in choice or "全火力" in choice:
-        nasdaq = get_nasdaq100_tickers()
-    
-    combined
+                tickers
