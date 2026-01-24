@@ -9,12 +9,27 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (客製版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (策略導引版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (客製版)")
-st.write("""
-**策略目標**：鎖定 **日線多頭 + 4H U型**，HV極低波動篩選，4H圖表預設顯示 160 根K線。
-""")
+st.title("👻 幽靈策略掃描器")
+
+# --- 【新增】幽靈策略步驟說明 ---
+st.write("**策略目標**：鎖定 **日線多頭 + 4H U型**，尋找「結冰區」起漲點，並透過動態期權組合鎖定利潤。")
+
+with st.expander("📖 檢視「幽靈策略」動態蝴蝶演化步驟"):
+    st.markdown("""
+    ### 👻 幽靈策略核心步驟
+    1. **Step 1 (初始測試)**: 
+       - **動作**：買進 低價位 Call，同時賣出 高一階 Call (組成牛市價差 Bull Call Spread)。
+       - **目的**：用於低成本試探，若掃描器發現 **HV 結冰且貼近 MA60** 時進場。
+       - **防守**：若判斷失敗，執行規則 1 儘快平倉。
+    2. **Step 2 (趨勢加碼)**: 
+       - **動作**：當股價上漲、趨勢出現但尚未超過賣出價時，**買進更高一階的 Call**。
+       - **目的**：利用浮盈加碼，追求波動性擴張帶來的利潤。
+    3. **Step 3 (鎖定利潤)**: 
+       - **動作**：股價繼續上漲超過最高階 Call 時，**再賣出一個中間價位的 Call**。
+       - **型態**：此時轉化為 **穩賺的蝴蝶型態 (Iron Butterfly/Butterfly)**，等待結算鎖定獲利。
+    """)
 
 # --- 2. 側邊欄：參數設定區 ---
 st.sidebar.header("🎯 市場與數量")
@@ -30,9 +45,7 @@ check_daily_ma60_up = st.sidebar.checkbox("✅ 必須：日線 60MA 向上", val
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 必須：股價 > 日線 60MA", value=True)
 
 st.sidebar.header("⚙️ 基礎篩選")
-# 【修改 1】HV 預設改為 30
 hv_threshold = st.sidebar.slider("HV Rank 門檻 (越低越好)", 10, 100, 30)
-# 【修改 2】成交量預設改為 10M (上限拉高到 100M 以便調整)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, 10) 
 min_volume_threshold = min_vol_m * 1000000
 
@@ -71,25 +84,15 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# --- 改進版繪圖函數 ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
-    
-    # 分頁順序：周 -> 日 -> 4H
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線 (Long)", "📅 日線 (Mid)", "⏱️ 4H (Short)"])
     
-    # 共用佈局
     layout_common = dict(
         xaxis_rangeslider_visible=False,
         height=600,  
         margin=dict(l=10, r=10, t=50, b=50), 
-        legend=dict(
-            orientation="h",
-            yanchor="top",
-            y=-0.12,
-            xanchor="center",
-            x=0.5
-        ),
+        legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5),
         dragmode='pan', 
     )
 
@@ -107,31 +110,15 @@ def plot_interactive_chart(symbol):
             else:
                 df_w['MA20'] = df_w['Close'].rolling(window=20).mean()
                 df_w['MA60'] = df_w['Close'].rolling(window=60).mean()
-
                 fig_w = go.Figure()
-                fig_w.add_trace(go.Candlestick(
-                    x=df_w.index, open=df_w['Open'], high=df_w['High'],
-                    low=df_w['Low'], close=df_w['Close'], name='周K'
-                ))
-                fig_w.add_trace(go.Scatter(
-                    x=df_w.index, y=df_w['MA20'], mode='lines', name='MA20',
-                    line=dict(color='royalblue', width=1), connectgaps=True
-                ))
-                fig_w.add_trace(go.Scatter(
-                    x=df_w.index, y=df_w['MA60'], mode='lines', name='MA60',
-                    line=dict(color='orange', width=3), connectgaps=True
-                ))
-                
+                fig_w.add_trace(go.Candlestick(x=df_w.index, open=df_w['Open'], high=df_w['High'], low=df_w['Low'], close=df_w['Close'], name='周K'))
+                fig_w.add_trace(go.Scatter(x=df_w.index, y=df_w['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1), connectgaps=True))
+                fig_w.add_trace(go.Scatter(x=df_w.index, y=df_w['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True))
                 fig_w.update_layout(title=get_title_config(f"{symbol} 周線"), yaxis_title="股價", **layout_common)
-                
                 if len(df_w) > 100:
-                    start_view = df_w.index[-100]
-                    end_view = df_w.index[-1] + pd.Timedelta(weeks=1)
-                    fig_w.update_xaxes(range=[start_view, end_view])
-                
+                    fig_w.update_xaxes(range=[df_w.index[-100], df_w.index[-1] + pd.Timedelta(weeks=1)])
                 st.plotly_chart(fig_w, use_container_width=True, config=config_common)
-        except Exception as e:
-            st.error(f"周線圖錯誤: {e}")
+        except: pass
 
     # --- Tab 2: 日線圖 ---
     with tab2:
@@ -142,279 +129,122 @@ def plot_interactive_chart(symbol):
             else:
                 df_d['MA20'] = df_d['Close'].rolling(window=20).mean()
                 df_d['MA60'] = df_d['Close'].rolling(window=60).mean()
-
                 fig_d = go.Figure()
-                fig_d.add_trace(go.Candlestick(
-                    x=df_d.index, open=df_d['Open'], high=df_d['High'],
-                    low=df_d['Low'], close=df_d['Close'], name='日K'
-                ))
-                fig_d.add_trace(go.Scatter(
-                    x=df_d.index, y=df_d['MA20'], mode='lines', name='MA20',
-                    line=dict(color='royalblue', width=1), connectgaps=True
-                ))
-                fig_d.add_trace(go.Scatter(
-                    x=df_d.index, y=df_d['MA60'], mode='lines', name='MA60',
-                    line=dict(color='orange', width=3), connectgaps=True
-                ))
-                
+                fig_d.add_trace(go.Candlestick(x=df_d.index, open=df_d['Open'], high=df_d['High'], low=df_d['Low'], close=df_d['Close'], name='日K'))
+                fig_d.add_trace(go.Scatter(x=df_d.index, y=df_d['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1), connectgaps=True))
+                fig_d.add_trace(go.Scatter(x=df_d.index, y=df_d['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True))
                 fig_d.update_layout(title=get_title_config(f"{symbol} 日線"), yaxis_title="股價", **layout_common)
-                
-                rangebreaks_settings = [dict(bounds=["sat", "mon"])]
-                
                 if len(df_d) > 150:
-                    start_view = df_d.index[-150]
-                    end_view = df_d.index[-1] + pd.Timedelta(days=2)
-                    fig_d.update_xaxes(range=[start_view, end_view], rangebreaks=rangebreaks_settings)
-                else:
-                    fig_d.update_xaxes(rangebreaks=rangebreaks_settings)
-
+                    fig_d.update_xaxes(range=[df_d.index[-150], df_d.index[-1] + pd.Timedelta(days=2)], rangebreaks=[dict(bounds=["sat", "mon"])])
                 st.plotly_chart(fig_d, use_container_width=True, config=config_common)
-        except Exception as e:
-            st.error(f"日線圖錯誤: {e}")
+        except: pass
 
-    # --- Tab 3: 4小時圖 (Category Axis + 160根) ---
+    # --- Tab 3: 4小時圖 (Category Axis) ---
     with tab3:
         try:
-            # 載入完整數據
             df_1h = stock.history(period="6mo", interval="1h")
             if len(df_1h) < 100:
                 st.warning("4H 數據不足")
             else:
-                df_4h = df_1h.resample('4h').agg({
-                    'Open': 'first', 'High': 'max', 
-                    'Low': 'min', 'Close': 'last'
-                }).dropna()
-
+                df_4h = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
                 df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
                 df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
-
-                # 強制轉字串索引，修復空隙
                 df_4h['date_str'] = df_4h.index.strftime('%m-%d %H:%M')
-
                 fig_4h = go.Figure()
-                
-                fig_4h.add_trace(go.Candlestick(
-                    x=df_4h['date_str'], 
-                    open=df_4h['Open'], high=df_4h['High'],
-                    low=df_4h['Low'], close=df_4h['Close'], 
-                    name='4H K'
-                ))
-                fig_4h.add_trace(go.Scatter(
-                    x=df_4h['date_str'], y=df_4h['MA20'], 
-                    mode='lines', name='MA20',
-                    line=dict(color='royalblue', width=1),
-                    connectgaps=True
-                ))
-                fig_4h.add_trace(go.Scatter(
-                    x=df_4h['date_str'], y=df_4h['MA60'], 
-                    mode='lines', name='MA60',
-                    line=dict(color='orange', width=3),
-                    connectgaps=True
-                ))
-                
+                fig_4h.add_trace(go.Candlestick(x=df_4h['date_str'], open=df_4h['Open'], high=df_4h['High'], low=df_4h['Low'], close=df_4h['Close'], name='4H K'))
+                fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1), connectgaps=True))
+                fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True))
                 fig_4h.update_layout(title=get_title_config(f"{symbol} 4小時圖"), yaxis_title="股價", **layout_common)
-                
-                # 【修改 3】預設顯示最後 160 根
                 total_bars = len(df_4h)
-                zoom_start = max(0, total_bars - 160) 
-                zoom_end = total_bars
-                
-                fig_4h.update_xaxes(type='category', range=[zoom_start, zoom_end])
-                
+                fig_4h.update_xaxes(type='category', range=[max(0, total_bars - 160), total_bars])
                 st.plotly_chart(fig_4h, use_container_width=True, config=config_common)
-                
-        except Exception as e:
-            st.error(f"4H 圖錯誤: {e}")
+        except: pass
 
 @st.cache_data(ttl=3600)
 def get_sp500_tickers():
-    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        response = requests.get(url, headers=headers)
-        df = pd.read_html(StringIO(response.text))[0]
+        df = pd.read_html(StringIO(requests.get(url, headers={"User-Agent": "Mozilla/5.0"}).text))[0]
         return [t.replace('.', '-') for t in df['Symbol'].tolist()]
     except: return []
 
 @st.cache_data(ttl=3600)
 def get_nasdaq100_tickers():
-    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         url = "https://en.wikipedia.org/wiki/Nasdaq-100"
-        response = requests.get(url, headers=headers)
-        dfs = pd.read_html(StringIO(response.text))
+        dfs = pd.read_html(StringIO(requests.get(url, headers={"User-Agent": "Mozilla/5.0"}).text))
         for df in dfs:
             if 'Ticker' in df.columns: return [t.replace('.', '-') for t in df['Ticker'].tolist()]
             elif 'Symbol' in df.columns: return [t.replace('.', '-') for t in df['Symbol'].tolist()]
         return []
     except: return []
 
-def get_combined_tickers(choice, limit):
-    sp500 = []
-    nasdaq = []
-    if "S&P" in choice or "全火力" in choice: sp500 = get_sp500_tickers()
-    if "NASDAQ" in choice or "全火力" in choice: nasdaq = get_nasdaq100_tickers()
-    combined = list(set(sp500 + nasdaq))
-    if not combined: return ['TSM', 'NVDA', 'AAPL', 'MSFT', 'AMD', 'PLTR']
-    return combined[:limit]
-
-def analyze_u_shape(ma_series):
-    try:
-        y = ma_series.values
-        x = np.arange(len(y))
-        coeffs = np.polyfit(x, y, 2)
-        a, b, c = coeffs
-        if a <= 0: return False, 0
-        vertex_x = -b / (2 * a)
-        len_window = len(y)
-        if not (len_window * 0.3 <= vertex_x <= len_window * 1.1): return False, a
-        if (y[-1] - y[-2]) <= 0: return False, a
-        return True, a
-    except: return False, 0
-
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
         df_1h = stock.history(period="6mo", interval="1h")
         if len(df_1h) < 240: return None
-
-        df_daily_synth = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
-        df_daily_synth['MA60'] = df_daily_synth['Close'].rolling(window=60).mean()
-        if len(df_daily_synth) < 60: return None
-        
-        daily_ma60_now = df_daily_synth['MA60'].iloc[-1]
-        daily_ma60_prev = df_daily_synth['MA60'].iloc[-2]
-        current_price_daily = df_daily_synth['Close'].iloc[-1]
-
-        if check_daily_ma60_up and daily_ma60_now <= daily_ma60_prev: return None
-        if check_price_above_daily_ma60 and current_price_daily < daily_ma60_now: return None
-
-        if df_daily_synth['Volume'].rolling(window=20).mean().iloc[-1] < vol_threshold: return None
-
-        close_daily = df_daily_synth['Close']
-        log_ret = np.log(close_daily / close_daily.shift(1))
+        df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
+        df_daily['MA60'] = df_daily['Close'].rolling(window=60).mean()
+        if len(df_daily) < 60: return None
+        if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
+        if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
+        if df_daily['Volume'].rolling(window=20).mean().iloc[-1] < vol_threshold: return None
+        log_ret = np.log(df_daily['Close'] / df_daily['Close'].shift(1))
         vol_30d = log_ret.rolling(window=30).std() * np.sqrt(252) * 100
-        current_hv = vol_30d.iloc[-1]
-        min_hv, max_hv = vol_30d.min(), vol_30d.max()
-        if max_hv == min_hv: return None
-        hv_rank = ((current_hv - min_hv) / (max_hv - min_hv)) * 100
+        vol_5d = log_ret.tail(5).std() * np.sqrt(252) * 100 if len(log_ret) >= 5 else 0
+        hv_rank = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
         if hv_rank > hv_threshold: return None
-
-        df_4h = df_1h.resample('4h').agg({'Close': 'last', 'Volume': 'sum'}).dropna()
-        if len(df_4h) < 60: return None
+        df_4h = df_1h.resample('4h').agg({'Close': 'last'}).dropna()
         df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
         ma_segment = df_4h['MA60'].iloc[-u_sensitivity:]
-        if len(ma_segment) < u_sensitivity: return None
-        
-        current_price_4h = df_4h['Close'].iloc[-1]
-        ma60_now_4h = ma_segment.iloc[-1]
-        dist_pct = ((current_price_4h - ma60_now_4h) / ma60_now_4h) * 100
+        dist_pct = ((df_4h['Close'].iloc[-1] - ma_segment.iloc[-1]) / ma_segment.iloc[-1]) * 100
         if abs(dist_pct) > dist_threshold: return None 
-        
-        u_score, curvature = -abs(dist_pct), 0
+        u_score = -abs(dist_pct)
         if enable_u_logic:
-            is_u, curv = analyze_u_shape(ma_segment)
-            if not is_u or curv < min_curvature: return None
-            curvature = curv
-            u_score = (curvature * 1000) - (abs(dist_pct) * 0.5)
-
+            y = ma_segment.values; x = np.arange(len(y))
+            coeffs = np.polyfit(x, y, 2)
+            if coeffs[0] > 0 and (len(y)*0.3 <= -coeffs[1]/(2*coeffs[0]) <= len(y)*1.1) and (y[-1]-y[-2]) > 0 and coeffs[0] >= min_curvature:
+                u_score = (coeffs[0] * 1000) - (abs(dist_pct) * 0.5)
+            else: return None
+        if not stock.options: return None
+        earnings_date = "未知"
         try:
-            if not stock.options: return None
-        except: return None
-
-        industry_tw, earnings_date_str = "未知", "未知"
-        try:
-            info = stock.info
-            industry_tw = translate_industry(info.get('industry', info.get('sector', 'N/A')))
             cal = stock.calendar
-            if cal and isinstance(cal, dict):
-                if 'Earnings Date' in cal: earnings_date_str = cal['Earnings Date'][0].strftime('%m-%d')
-                elif 'Earnings High' in cal: earnings_date_str = cal['Earnings High'][0].strftime('%m-%d')
+            if cal and 'Earnings Date' in cal: earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
         except: pass
-
         return {
-            "代號": symbol,
-            "連結": f"https://finance.yahoo.com/quote/{symbol}", 
-            "HV Rank": round(hv_rank, 1),
-            "現價": round(current_price_4h, 2),
-            "4H 60MA": round(ma60_now_4h, 2),
-            "乖離率": f"{round(dist_pct, 2)}%",
-            "產業": industry_tw,
-            "財報日": earnings_date_str,
-            "題材搜尋": f"https://www.google.com/search?q={symbol}+美股+題材+風險+分析",
+            "代號": symbol, "連結": f"https://finance.yahoo.com/quote/{symbol}", 
+            "HV Rank": round(hv_rank, 1), "Week Vol": round(vol_5d, 1),
+            "現價": round(df_4h['Close'].iloc[-1], 2), "4H 60MA": round(ma_segment.iloc[-1], 2),
+            "乖離率": f"{round(dist_pct, 2)}%", "產業": translate_industry(stock.info.get('industry', 'N/A')),
+            "財報日": earnings_date, "題材搜尋": f"https://www.google.com/search?q={symbol}+美股+題材+風險+分析",
             "_sort_score": u_score
         }
     except: return None
 
-# --- 4. 主程式執行邏輯 ---
-
+# --- 4. 執行邏輯與顯示 ---
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     st.session_state['scan_results'] = None
-    status_text = f"正在下載 {market_choice} 清單..."
-    progress_bar = st.progress(0)
-    
-    with st.status(status_text, expanded=True) as status:
-        target_tickers = get_combined_tickers(market_choice, scan_limit)
-        status.write(f"🔥 Turbo 模式啟動！目標: {len(target_tickers)} 檔")
-        
+    with st.status("正在掃描中...", expanded=True) as status:
+        tickers = list(set(get_sp500_tickers() + get_nasdaq100_tickers()))[:scan_limit]
         results = []
-        completed_count = 0
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_ticker = {executor.submit(get_ghost_metrics, t, min_volume_threshold): t for t in target_tickers}
-            for future in as_completed(future_to_ticker):
+            future_to_ticker = {executor.submit(get_ghost_metrics, t, min_volume_threshold): t for t in tickers}
+            for i, future in enumerate(as_completed(future_to_ticker)):
                 data = future.result()
                 if data: results.append(data)
-                completed_count += 1
-                progress_bar.progress(completed_count / len(target_tickers))
-        
-        status.update(label=f"掃描完成！共發現 {len(results)} 檔。", state="complete", expanded=False)
         st.session_state['scan_results'] = results
-
-# --- 5. 顯示結果 (上下佈局) ---
+        status.update(label=f"完成！發現 {len(results)} 檔標的。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    df_results = pd.DataFrame(st.session_state['scan_results'])
-    df_results = df_results.sort_values(by="HV Rank", ascending=True)
-    
-    st.success(f"🎯 發現 {len(df_results)} 檔優質標的！")
-
-    st.subheader("📋 掃描結果列表")
-    column_config = {
-        "代號": st.column_config.LinkColumn(
-            "代號", 
-            display_text="https://finance\\.yahoo\\.com/quote/(.*)", 
-            help="點擊開 Yahoo"
-        ),
-        "連結": None, 
-        "HV Rank": st.column_config.NumberColumn("HV", format="%.0f"),
-        "現價": st.column_config.NumberColumn(format="$%.2f"),
-        "4H 60MA": st.column_config.NumberColumn("季線", format="$%.2f"),
-        "乖離率": st.column_config.TextColumn("乖離"),
-        "產業": st.column_config.TextColumn("產業"),
-        "財報日": st.column_config.TextColumn("財報"),
-        "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍"),
-        "_sort_score": None
-    }
-    
-    df_display = df_results.copy()
-    df_display["代號"] = df_display["連結"] 
-    
-    st.dataframe(
-        df_display,
-        column_config=column_config,
-        hide_index=True,
-        use_container_width=True
-    )
-
-    st.markdown("---") 
-
-    st.subheader("🕯️ K線檢視器")
-    st.info("👇 選擇股票後，可點選分頁切換時框")
-    
-    select_options = df_results.apply(lambda x: f"{x['代號'].split('/')[-1]} - {x['產業']}", axis=1).tolist()
-    selected_option = st.selectbox("選擇股票:", select_options)
-    
+    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank", ascending=True)
+    st.dataframe(df, column_config={
+        "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*)"),
+        "連結": None, "_sort_score": None,
+        "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍")
+    }, hide_index=True, use_container_width=True)
+    st.markdown("---")
+    selected_option = st.selectbox("選擇股票檢視 K 線:", df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist())
     if selected_option:
-        selected_symbol = selected_option.split(" - ")[0]
-        plot_interactive_chart(selected_symbol)
-        st.markdown(f"**操作提示：**\n* 4H 圖預設顯示最後 **160根**，可平移查看歷史。\n* 篩選標準：HV < **30**，日均量 > **1000萬股**。")
+        plot_interactive_chart(selected_option.split(" - ")[0])
