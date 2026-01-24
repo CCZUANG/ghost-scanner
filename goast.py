@@ -41,6 +41,7 @@ def get_sp500_tickers():
         tickers = [t.replace('.', '-') for t in tickers]
         return tickers
     except:
+        # 備用清單，防止爬蟲失敗
         return ['TSM', 'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'NFLX', 'PLTR', 'LUNR']
 
 def get_ghost_metrics(symbol, vol_threshold):
@@ -63,20 +64,4 @@ def get_ghost_metrics(symbol, vol_threshold):
         trend_up = current_price > sma20
         
         # 2. 波動 (HV Rank)
-        log_ret = np.log(close / close.shift(1))
-        vol_30d = log_ret.rolling(window=30).std() * np.sqrt(252) * 100
-        current_hv = vol_30d.iloc[-1]
-        min_hv = vol_30d.min()
-        max_hv = vol_30d.max()
-        if max_hv == min_hv: return None
-        hv_rank = ((current_hv - min_hv) / (max_hv - min_hv)) * 100
-        
-        # --- C. 型態判別 (Pattern Recognition) ---
-        pattern = "📈 穩健上漲" # 預設值
-        
-        # 計算布林通道 (Bollinger Bands)
-        std20 = close.rolling(window=20).std().iloc[-1]
-        upper_band = sma20 + (2 * std20)
-        lower_band = sma20 - (2 * std20)
-        
-        # 指標 1: 布林帶寬 (Bandwidth)
+        log_ret = np.log(close / close.shift(
