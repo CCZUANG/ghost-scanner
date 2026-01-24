@@ -9,9 +9,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (三週期版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (修復版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (三週期版)")
+st.title("👻 幽靈策略掃描器 (修復版)")
 st.write("""
 **策略目標**：鎖定 **日線多頭 + 4H U型**，並提供 **周/日/4H 三週期** 交叉檢視。
 """)
@@ -69,14 +69,14 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# --- 改進版繪圖函數 (支援 周/日/4H) ---
+# --- 改進版繪圖函數 (修復參數衝突) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     
     # 建立三個分頁
     tab1, tab2, tab3 = st.tabs(["📅 日線圖 (Daily)", "⏱️ 4小時圖 (4H)", "🗓️ 周線圖 (Weekly)"])
     
-    # 共用佈局設定 (解決重疊問題)
+    # 共用佈局 (移除了 title 設定，避免衝突)
     layout_common = dict(
         xaxis_rangeslider_visible=False,
         height=600,  
@@ -87,13 +87,17 @@ def plot_interactive_chart(symbol):
             y=-0.12,            # 移到下方
             xanchor="center",
             x=0.5
-        ),
-        title=dict(
-            x=0.02,             # 標題靠左
+        )
+    )
+
+    # 定義標題樣式函數 (避免重複代碼)
+    def get_title_config(text):
+        return dict(
+            text=text,
+            x=0.02,
             xanchor='left',
             font=dict(size=16)
         )
-    )
 
     # --- Tab 1: 日線圖 ---
     with tab1:
@@ -105,7 +109,7 @@ def plot_interactive_chart(symbol):
                 df_d['MA20'] = df_d['Close'].rolling(window=20).mean()
                 df_d['MA60'] = df_d['Close'].rolling(window=60).mean()
                 
-                df_d_view = df_d.iloc[-150:] # 顯示近 150 天
+                df_d_view = df_d.iloc[-150:] 
 
                 fig_d = go.Figure()
                 fig_d.add_trace(go.Candlestick(
@@ -121,7 +125,12 @@ def plot_interactive_chart(symbol):
                     line=dict(color='orange', width=3)
                 ))
                 
-                fig_d.update_layout(title=f"{symbol} 日線趨勢", yaxis_title="股價", **layout_common)
+                # 修復點：title 作為字典傳入，不跟 layout_common 衝突
+                fig_d.update_layout(
+                    title=get_title_config(f"{symbol} 日線趨勢"),
+                    yaxis_title="股價", 
+                    **layout_common
+                )
                 fig_d.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
                 st.plotly_chart(fig_d, use_container_width=True)
         except Exception as e:
@@ -142,7 +151,7 @@ def plot_interactive_chart(symbol):
                 df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
                 df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
                 
-                df_4h_view = df_4h.iloc[-80:] # 顯示近 80 根 (寬鬆)
+                df_4h_view = df_4h.iloc[-80:] 
 
                 fig_4h = go.Figure()
                 fig_4h.add_trace(go.Candlestick(
@@ -157,25 +166,28 @@ def plot_interactive_chart(symbol):
                     line=dict(color='orange', width=3)
                 ))
                 
-                fig_4h.update_layout(title=f"{symbol} 4小時圖 (進場點)", yaxis_title="股價", **layout_common)
+                # 修復點
+                fig_4h.update_layout(
+                    title=get_title_config(f"{symbol} 4小時圖 (進場點)"),
+                    yaxis_title="股價", 
+                    **layout_common
+                )
                 fig_4h.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
                 st.plotly_chart(fig_4h, use_container_width=True)
                 
         except Exception as e:
             st.error(f"4H 圖錯誤: {e}")
 
-    # --- Tab 3: 周線圖 (新增) ---
+    # --- Tab 3: 周線圖 ---
     with tab3:
         try:
-            # 抓取 5 年周線，確保 MA60 足夠
             df_w = stock.history(period="5y", interval="1wk")
             if len(df_w) < 60:
                 st.warning("周線數據不足")
             else:
                 df_w['MA20'] = df_w['Close'].rolling(window=20).mean()
-                df_w['MA60'] = df_w['Close'].rolling(window=60).mean() # 60週均線 (長線支撐)
+                df_w['MA60'] = df_w['Close'].rolling(window=60).mean()
                 
-                # 顯示最近 100 週 (約 2 年)
                 df_w_view = df_w.iloc[-100:]
 
                 fig_w = go.Figure()
@@ -194,8 +206,12 @@ def plot_interactive_chart(symbol):
                     line=dict(color='orange', width=3)
                 ))
                 
-                fig_w.update_layout(title=f"{symbol} 周線圖 (長線趨勢)", yaxis_title="股價", **layout_common)
-                # 周線不需要移除週末，本身就是週資料
+                # 修復點
+                fig_w.update_layout(
+                    title=get_title_config(f"{symbol} 周線圖 (長線趨勢)"),
+                    yaxis_title="股價", 
+                    **layout_common
+                )
                 st.plotly_chart(fig_w, use_container_width=True)
         except Exception as e:
             st.error(f"周線圖錯誤: {e}")
