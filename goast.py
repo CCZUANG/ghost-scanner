@@ -23,7 +23,7 @@ if 'backup' not in st.session_state:
     }
 
 def handle_u_logic_toggle():
-    """連動邏輯：啟動時備份設定，關閉時秒速還原"""
+    """連動邏輯：啟動時備份，關閉時秒速還原"""
     if st.session_state.u_logic_key:
         st.session_state.backup.update({
             'scan_limit': st.session_state.scan_limit,
@@ -42,9 +42,9 @@ def handle_u_logic_toggle():
         st.session_state.u_sensitivity = st.session_state.backup['u_sensitivity']
 
 st.title("👻 幽靈策略掃描器")
-st.caption(f"📅 當前時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
+st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (Step 1-3 完整回歸) ---
+# --- 2. 核心策略導引區 (Step 1-3 文字完整恢復) ---
 with st.expander("📖 幽靈策略：動態蝴蝶演化步驟 (詳細準則)", expanded=True):
     col_step1, col_step2, col_step3 = st.columns(3)
     
@@ -53,8 +53,8 @@ with st.expander("📖 幽靈策略：動態蝴蝶演化步驟 (詳細準則)", 
         st.markdown("""
         **🚀 啟動時機**：放量突破關鍵壓力或回測支撐成功時。  
         **動作**：買進 低價位 Call + 賣出 高一階 Call (**多頭價差**)。  
-        **成功指標**：股價站穩成本區，Delta 隨價格上升穩定增加。  
-        **❌ 失敗判定**：2 交易日橫盤或跌破 13.8 / 總損失超過 3 點。
+        **成功指標**：股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。  
+        **❌ 失敗判定**：2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
         """)
         
     with col_step2:
@@ -72,14 +72,14 @@ with st.expander("📖 幽靈策略：動態蝴蝶演化步驟 (詳細準則)", 
         **🚀 啟動時機**：股價強勢漲破加碼價，且市場出現過熱訊號時。  
         **動作**：**再加賣一張中間價位的 Call** (總計賣出兩張)。  
         **成功指標**：型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。  
-        **❌ 失敗判定**：爆量不漲或價格遠超最高階未見拉回。
+        **❌ 失敗判定**：爆量不漲或價格遠超最高階。
         """)
 
     st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
 
 st.markdown("---")
 
-# --- 3. 側邊欄：參數設定區 ---
+# --- 3. 側邊欄 ---
 st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 enable_u_logic = st.sidebar.checkbox("✅ 啟動 4小時 U型戰法連動", value=False, key='u_logic_key', on_change=handle_u_logic_toggle)
@@ -92,10 +92,10 @@ check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", v
 st.sidebar.header("⚙️ 基礎篩選")
 hv_threshold = st.sidebar.slider("HV Rank 門檻", 10, 100, 30)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
-dist_threshold = st.sidebar.slider("距離 4H 60MA 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
+dist_threshold = st.sidebar.slider("距離 MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
 
 if enable_u_logic:
-    u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 60, key='u_sensitivity')
+    u_sensitivity = st.sidebar.slider("U型敏感度", 20, 60, key='u_sensitivity')
     min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
 else:
     u_sensitivity, min_curvature = 30, 0.003
@@ -119,7 +119,7 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 (4H 無縫 Category Axis) ---
+# --- 5. 核心繪圖函數 ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
@@ -151,7 +151,7 @@ def plot_interactive_chart(symbol):
             st.plotly_chart(fig, use_container_width=True, config=config)
     except: st.error("圖表載入中或數據不足")
 
-# --- 6. 核心指標運算 ---
+# --- 6. 股票指標運算 ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol); df_1h = stock.history(period="6mo", interval="1h")
@@ -183,58 +183,58 @@ def get_ghost_metrics(symbol, vol_threshold):
             if coeffs[0] > 0 and (len(y)*0.3 <= -coeffs[1]/(2*coeffs[0]) <= len(y)*1.1) and (y[-1]-y[-2]) > 0 and coeffs[0] >= min_curvature:
                 u_score = (coeffs[0] * 1000) - (abs(dist_pct) * 0.5)
             else: return None
+        
+        # 【精準財報】抓取未來財報日期
+        earnings_date = "未知"
+        cal = stock.calendar
+        if cal is not None and 'Earnings Date' in cal:
+            earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
             
         return {
             "代號": symbol, "HV Rank": round(hv_rank, 1), "週波動%": round(week_vol_move, 2),
             "預期變動$": f"±{round(move_dollar, 2)}", "現價": round(cur_price, 2),
             "4H 60MA": round(df_4h['MA60'].iloc[-1], 2), "乖離率": f"{round(dist_pct, 2)}%",
             "產業": translate_industry(stock.info.get('industry', 'N/A')),
-            "財報日": stock.calendar['Earnings Date'][0].strftime('%m-%d') if stock.calendar and 'Earnings Date' in stock.calendar else "未知",
-            "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", "_sort_score": u_score
+            "下季財報": earnings_date, "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", "_sort_score": u_score
         }
     except: return None
 
-# --- 7. 【強韌抓取】市場代號抓取器 ---
+# --- 7. 市場代號抓取 ---
 @st.cache_data(ttl=3600)
 def get_tickers_robust(choice):
     headers = {"User-Agent": "Mozilla/5.0"}
     tickers = []
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        res = requests.get(url, headers=headers)
-        df = pd.read_html(StringIO(res.text))[0]
-        col = [c for c in df.columns if 'Symbol' in c or 'Ticker' in c][0]
-        tickers.extend(df[col].tolist())
+        res = requests.get(url, headers=headers); df = pd.read_html(StringIO(res.text))[0]
+        col = [c for c in df.columns if 'Symbol' in c or 'Ticker' in c][0]; tickers.extend(df[col].tolist())
     except: pass
     try:
         url = "https://en.wikipedia.org/wiki/Nasdaq-100"
-        res = requests.get(url, headers=headers)
-        dfs = pd.read_html(StringIO(res.text))
+        res = requests.get(url, headers=headers); dfs = pd.read_html(StringIO(res.text))
         for df in dfs:
             col = [c for c in df.columns if 'Ticker' in c or 'Symbol' in c]
             if col and 95 <= len(df) <= 105:
-                tickers.extend(df[col[0]].tolist())
-                break
+                tickers.extend(df[col[0]].tolist()); break
     except: pass
-    final = list(set([str(t).replace('.', '-') for t in tickers if len(str(t)) < 6]))
-    return final if final else ["AAPL", "NVDA", "TSLA", "PLTR", "AMD"]
+    return list(set([str(t).replace('.', '-') for t in tickers if len(str(t)) < 6]))
 
 # --- 8. 主程式執行 ---
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     st.session_state['scan_results'] = None
     min_volume_threshold = st.session_state.min_vol_m * 1000000 
     
-    with st.status("🔍 市場代號抓取中...", expanded=True) as status:
+    with st.status("🔍 市場掃描中...", expanded=True) as status:
         tickers = get_tickers_robust(market_choice)[:scan_limit]
-        status.write(f"✅ 已獲得 {len(tickers)} 檔代號，開始技術面掃描...")
+        status.write(f"✅ 已獲得 {len(tickers)} 檔代號，開始技術面過濾...")
         results = []; progress = st.progress(0); count = 0
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_ticker = {executor.submit(get_ghost_metrics, t, min_volume_threshold): t for t in tickers}
             for future in as_completed(future_to_ticker):
-                data = future.result(); count += 1; progress.progress(count / len(tickers))
+                data = future.result(); count += 1; progress.progress(count / total_tickers if total_tickers > 0 else 0)
                 if data: results.append(data)
         st.session_state['scan_results'] = results
-        status.update(label=f"完成！共發現 {len(results)} 檔符合條件標的。", state="complete", expanded=False)
+        status.update(label=f"掃描完成！共發現 {len(results)} 檔標的。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False)
