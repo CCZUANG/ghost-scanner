@@ -9,14 +9,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (策略整合版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器", page_icon="👻", layout="wide")
 
 st.title("👻 幽靈策略掃描器")
 
-# --- 2. 核心策略導引區 (User 指定加入內容) ---
+# --- 2. 核心策略導引區 ---
 st.write("**策略目標**：鎖定 **日線多頭 + 4H U型**，尋找「結冰區」起漲點，並透過動態期權組合鎖定利潤。")
 
-# 使用 Expander 讓介面保持整潔，但預設展開以便閱讀
 with st.expander("📖 幽靈策略：動態蝴蝶演化步驟", expanded=True):
     col_step1, col_step2, col_step3 = st.columns(3)
     
@@ -71,9 +70,7 @@ check_daily_ma60_up = st.sidebar.checkbox("✅ 必須：日線 60MA 向上", val
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 必須：股價 > 日線 60MA", value=True)
 
 st.sidebar.header("⚙️ 基礎篩選")
-# 【預設調整】HV 預設 30
 hv_threshold = st.sidebar.slider("HV Rank 門檻 (越低越好)", 10, 100, 30)
-# 【預設調整】最小日均量 10M
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, 10) 
 min_volume_threshold = min_vol_m * 1000000
 
@@ -144,7 +141,7 @@ def plot_interactive_chart(symbol):
                 if len(df_w) > 100:
                     fig_w.update_xaxes(range=[df_w.index[-100], df_w.index[-1] + pd.Timedelta(weeks=1)])
                 st.plotly_chart(fig_w, use_container_width=True, config=config_common)
-        except: st.error("圖表載入失敗")
+        except: pass
 
     # --- Tab 2: 日線 ---
     with tab2:
@@ -161,9 +158,9 @@ def plot_interactive_chart(symbol):
                 if len(df_d) > 150:
                     fig_d.update_xaxes(range=[df_d.index[-150], df_d.index[-1] + pd.Timedelta(days=2)], rangebreaks=[dict(bounds=["sat", "mon"])])
                 st.plotly_chart(fig_d, use_container_width=True, config=config_common)
-        except: st.error("圖表載入失敗")
+        except: pass
 
-    # --- Tab 3: 4小時 (預設 160 根) ---
+    # --- Tab 3: 4小時 (Category Axis) ---
     with tab3:
         try:
             df_1h = stock.history(period="6mo", interval="1h")
@@ -179,7 +176,7 @@ def plot_interactive_chart(symbol):
             total_bars = len(df_4h)
             fig_4h.update_xaxes(type='category', range=[max(0, total_bars - 160), total_bars])
             st.plotly_chart(fig_4h, use_container_width=True, config=config_common)
-        except: st.error("圖表載入失敗")
+        except: pass
 
 @st.cache_data(ttl=3600)
 def get_sp500_tickers():
@@ -244,17 +241,28 @@ def get_ghost_metrics(symbol, vol_threshold):
         }
     except: return None
 
-# --- 5. 執行邏輯與顯示 ---
+# --- 5. 執行邏輯與顯示 (【已修正】加入進度條) ---
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     st.session_state['scan_results'] = None
     with st.status("正在依據幽靈策略掃描標的...", expanded=True) as status:
         tickers = list(set(get_sp500_tickers() + get_nasdaq100_tickers()))[:scan_limit]
+        total_tickers = len(tickers)
         results = []
+        
+        # 顯示進度條
+        progress_bar = st.progress(0)
+        completed_count = 0
+        
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_ticker = {executor.submit(get_ghost_metrics, t, min_volume_threshold): t for t in tickers}
             for future in as_completed(future_to_ticker):
                 data = future.result()
                 if data: results.append(data)
+                
+                # 更新進度條
+                completed_count += 1
+                progress_bar.progress(completed_count / total_tickers)
+        
         st.session_state['scan_results'] = results
         status.update(label=f"掃描完成！發現 {len(results)} 檔符合「結冰區」標的。", state="complete", expanded=False)
 
