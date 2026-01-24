@@ -9,11 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (雙時框版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (白色生命線版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (雙時框版)")
+st.title("👻 幽靈策略掃描器 (白色生命線版)")
 st.write("""
-**策略目標**：鎖定 **日線多頭 + 4H U型**，支援 **日線/4H 雙圖表切換** 檢視。
+**策略目標**：鎖定 **日線多頭 + 4H U型**，點擊代號可開外部連結，或在下方直接檢視 **互動式 K 線**。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -69,7 +69,7 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# --- 改進版繪圖函數 (支援日線 + 4H) ---
+# --- 繪圖函數 (MA60 改為白色) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     
@@ -95,14 +95,16 @@ def plot_interactive_chart(symbol):
                     x=df_d.index, y=df_d['MA20'], mode='lines', name='MA20 (月線)',
                     line=dict(color='orange', width=1)
                 ))
+                # 【修改】MA60 改為白色
                 fig_d.add_trace(go.Scatter(
                     x=df_d.index, y=df_d['MA60'], mode='lines', name='MA60 (季線)',
-                    line=dict(color='green', width=2)
+                    line=dict(color='white', width=2)
                 ))
                 fig_d.update_layout(
                     title=f"{symbol} 日線趨勢",
                     yaxis_title="股價", xaxis_rangeslider_visible=False,
-                    height=450, margin=dict(l=10, r=10, t=30, b=10)
+                    height=450, margin=dict(l=10, r=10, t=30, b=10),
+                    template="plotly_dark" # 強制使用深色主題，讓白線更明顯
                 )
                 st.plotly_chart(fig_d, use_container_width=True)
         except Exception as e:
@@ -111,11 +113,11 @@ def plot_interactive_chart(symbol):
     # --- Tab 2: 4小時圖 ---
     with tab2:
         try:
-            # 抓取 1 小時數據來合成 4H (抓 6 個月確保均線足夠)
+            # 抓取 1 小時數據來合成 4H
             df_1h = stock.history(period="6mo", interval="1h")
             
             if len(df_1h) < 100:
-                st.warning("4H 數據不足 (來源數據太少)")
+                st.warning("4H 數據不足")
             else:
                 # 合成 4H K線
                 df_4h = df_1h.resample('4h').agg({
@@ -125,9 +127,9 @@ def plot_interactive_chart(symbol):
 
                 # 計算關鍵均線
                 df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
-                df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean() # 這是策略的核心均線
+                df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
 
-                # 只顯示最近 2 個月，不然 K 線會太擠看不清楚 U 型
+                # 只顯示最近 2 個月
                 df_4h_view = df_4h.iloc[-120:] 
 
                 fig_4h = go.Figure()
@@ -137,16 +139,18 @@ def plot_interactive_chart(symbol):
                     low=df_4h_view['Low'], close=df_4h_view['Close'], 
                     name='4H K線'
                 ))
+                # 【修改】MA60 改為白色
                 fig_4h.add_trace(go.Scatter(
                     x=df_4h_view.index, y=df_4h_view['MA60'], 
                     mode='lines', name='MA60 (策略生命線)',
-                    line=dict(color='blue', width=2) # 4H 60MA 用藍色標示
+                    line=dict(color='white', width=2)
                 ))
                 
                 fig_4h.update_layout(
                     title=f"{symbol} 4小時圖 (檢視 U 型)",
                     yaxis_title="股價", xaxis_rangeslider_visible=False,
-                    height=450, margin=dict(l=10, r=10, t=30, b=10)
+                    height=450, margin=dict(l=10, r=10, t=30, b=10),
+                    template="plotly_dark" # 強制使用深色主題
                 )
                 st.plotly_chart(fig_4h, use_container_width=True)
                 
@@ -345,4 +349,4 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         if selected_option:
             selected_symbol = selected_option.split(" - ")[0]
             plot_interactive_chart(selected_symbol)
-            st.markdown(f"**操作提示：**\n* 點擊圖表上方 **「📅 日線圖」** 看大趨勢\n* 點擊 **「⏱️ 4小時圖」** 看進場點與 U 型")
+            st.markdown(f"**操作提示：**\n* **白色線** = 60MA (季線/生命線)\n* 日線圖看大趨勢，4H 圖看 U 型進場點")
