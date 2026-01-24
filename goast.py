@@ -9,11 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (K線看盤版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (雙時框版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (K線看盤版)")
+st.title("👻 幽靈策略掃描器 (雙時框版)")
 st.write("""
-**策略目標**：鎖定 **日線多頭 + 4H U型**，點擊代號可開外部連結，或在下方直接檢視 **互動式 K 線**。
+**策略目標**：鎖定 **日線多頭 + 4H U型**，支援 **日線/4H 雙圖表切換** 檢視。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -69,38 +69,89 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
+# --- 改進版繪圖函數 (支援日線 + 4H) ---
 def plot_interactive_chart(symbol):
-    try:
-        stock = yf.Ticker(symbol)
-        df = stock.history(period="1y")
-        if len(df) < 60:
-            st.error("數據不足，無法繪圖")
-            return
+    stock = yf.Ticker(symbol)
+    
+    # 建立頁籤
+    tab1, tab2 = st.tabs(["📅 日線圖 (Daily)", "⏱️ 4小時圖 (4H)"])
+    
+    # --- Tab 1: 日線圖 ---
+    with tab1:
+        try:
+            df_d = stock.history(period="1y")
+            if len(df_d) < 60:
+                st.warning("日線數據不足")
+            else:
+                df_d['MA20'] = df_d['Close'].rolling(window=20).mean()
+                df_d['MA60'] = df_d['Close'].rolling(window=60).mean() # 季線
 
-        df['MA20'] = df['Close'].rolling(window=20).mean()
-        df['MA60'] = df['Close'].rolling(window=60).mean()
+                fig_d = go.Figure()
+                fig_d.add_trace(go.Candlestick(
+                    x=df_d.index, open=df_d['Open'], high=df_d['High'],
+                    low=df_d['Low'], close=df_d['Close'], name='K線'
+                ))
+                fig_d.add_trace(go.Scatter(
+                    x=df_d.index, y=df_d['MA20'], mode='lines', name='MA20 (月線)',
+                    line=dict(color='orange', width=1)
+                ))
+                fig_d.add_trace(go.Scatter(
+                    x=df_d.index, y=df_d['MA60'], mode='lines', name='MA60 (季線)',
+                    line=dict(color='green', width=2)
+                ))
+                fig_d.update_layout(
+                    title=f"{symbol} 日線趨勢",
+                    yaxis_title="股價", xaxis_rangeslider_visible=False,
+                    height=450, margin=dict(l=10, r=10, t=30, b=10)
+                )
+                st.plotly_chart(fig_d, use_container_width=True)
+        except Exception as e:
+            st.error(f"日線圖錯誤: {e}")
 
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(
-            x=df.index, open=df['Open'], high=df['High'],
-            low=df['Low'], close=df['Close'], name='K線'
-        ))
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df['MA20'], mode='lines', name='MA20 (月線)',
-            line=dict(color='orange', width=1)
-        ))
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df['MA60'], mode='lines', name='MA60 (季線)',
-            line=dict(color='green', width=2)
-        ))
-        fig.update_layout(
-            title=f"{symbol} 日線圖 (含 MA20/MA60)",
-            yaxis_title="股價 (USD)", xaxis_rangeslider_visible=False,
-            height=500, margin=dict(l=20, r=20, t=40, b=20)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"繪圖發生錯誤: {e}")
+    # --- Tab 2: 4小時圖 ---
+    with tab2:
+        try:
+            # 抓取 1 小時數據來合成 4H (抓 6 個月確保均線足夠)
+            df_1h = stock.history(period="6mo", interval="1h")
+            
+            if len(df_1h) < 100:
+                st.warning("4H 數據不足 (來源數據太少)")
+            else:
+                # 合成 4H K線
+                df_4h = df_1h.resample('4h').agg({
+                    'Open': 'first', 'High': 'max', 
+                    'Low': 'min', 'Close': 'last'
+                }).dropna()
+
+                # 計算關鍵均線
+                df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
+                df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean() # 這是策略的核心均線
+
+                # 只顯示最近 2 個月，不然 K 線會太擠看不清楚 U 型
+                df_4h_view = df_4h.iloc[-120:] 
+
+                fig_4h = go.Figure()
+                fig_4h.add_trace(go.Candlestick(
+                    x=df_4h_view.index, 
+                    open=df_4h_view['Open'], high=df_4h_view['High'],
+                    low=df_4h_view['Low'], close=df_4h_view['Close'], 
+                    name='4H K線'
+                ))
+                fig_4h.add_trace(go.Scatter(
+                    x=df_4h_view.index, y=df_4h_view['MA60'], 
+                    mode='lines', name='MA60 (策略生命線)',
+                    line=dict(color='blue', width=2) # 4H 60MA 用藍色標示
+                ))
+                
+                fig_4h.update_layout(
+                    title=f"{symbol} 4小時圖 (檢視 U 型)",
+                    yaxis_title="股價", xaxis_rangeslider_visible=False,
+                    height=450, margin=dict(l=10, r=10, t=30, b=10)
+                )
+                st.plotly_chart(fig_4h, use_container_width=True)
+                
+        except Exception as e:
+            st.error(f"4H 圖錯誤: {e}")
 
 @st.cache_data(ttl=3600)
 def get_sp500_tickers():
@@ -259,7 +310,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     with col1:
         st.subheader("📋 掃描結果列表")
         column_config = {
-            # 【修復重點】這裡使用 regex 讓它只顯示網址最後面的代號
             "代號": st.column_config.LinkColumn(
                 "代號 (點擊開Yahoo)", 
                 display_text="https://finance\\.yahoo\\.com/quote/(.*)", 
@@ -277,7 +327,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         }
         
         df_display = df_results.copy()
-        # 將「連結」欄位的 URL 填入「代號」欄位，配合上面的 Regex 顯示
         df_display["代號"] = df_display["連結"] 
         
         st.dataframe(
@@ -289,11 +338,11 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
 
     with col2:
         st.subheader("🕯️ K線檢視器")
-        st.info("👇 在下方選單選擇股票，直接查看 K 線與 60MA")
+        st.info("👇 選擇股票後，可點選分頁切換時框")
         select_options = df_results.apply(lambda x: f"{x['代號'].split('/')[-1]} - {x['產業']}", axis=1).tolist()
         selected_option = st.selectbox("選擇股票:", select_options)
         
         if selected_option:
             selected_symbol = selected_option.split(" - ")[0]
             plot_interactive_chart(selected_symbol)
-            st.markdown(f"**觀察重點：**\n* 檢查日線 **60MA (綠線)** 是否向上？\n* 檢查股價是否剛回測綠線並出現紅K？")
+            st.markdown(f"**操作提示：**\n* 點擊圖表上方 **「📅 日線圖」** 看大趨勢\n* 點擊 **「⏱️ 4小時圖」** 看進場點與 U 型")
