@@ -7,9 +7,9 @@ from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (期權防呆版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (最終版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (期權防呆版)")
+st.title("👻 幽靈策略掃描器 (最終版)")
 st.write("""
 **策略目標**：尋找 **S&P 500 / NASDAQ 100** 中，符合 **U型反轉** 且 **確認有期權** 的標的。
 """)
@@ -129,37 +129,4 @@ def get_ghost_metrics(symbol, vol_threshold):
 
         df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
         
-        ma_segment = df_4h['MA60'].iloc[-u_sensitivity:]
-        if ma_segment.isnull().values.any() or len(ma_segment) < u_sensitivity: return None
-        
-        # --- U 型檢測 ---
-        is_u_shape, curvature = analyze_u_shape(ma_segment)
-        
-        if not is_u_shape: return None
-        if curvature < min_curvature: return None
-        
-        current_price = df_4h['Close'].iloc[-1]
-        ma60_now = ma_segment.iloc[-1]
-        dist_pct = ((current_price - ma60_now) / ma60_now) * 100
-        
-        if abs(dist_pct) > dist_threshold: return None 
-
-        # --- 【新增】最終防線：期權存在性檢查 ---
-        # 只有當股票通過上述所有困難篩選後，才檢查這一步（為了節省時間）
-        try:
-            # 嘗試獲取期權到期日列表，如果為空或報錯，代表無期權
-            if not stock.options: 
-                return None
-        except:
-            return None
-
-        # 計算排序分數
-        u_score = (curvature * 1000) - (abs(dist_pct) * 0.5)
-
-        return {
-            "代號": symbol,
-            "現價": round(current_price, 2),
-            "4H 60MA": round(ma60_now, 2),
-            "U型強度": round(curvature * 1000, 2),
-            "乖離率": f"{round(dist_pct, 2)}%",
-            "狀態": "✅ 完美微笑
+        ma_segment = df_4h['MA60'].iloc
