@@ -9,11 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (防手滑版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (寬螢幕版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (防手滑版)")
+st.title("👻 幽靈策略掃描器 (寬螢幕版)")
 st.write("""
-**策略目標**：鎖定 **日線多頭 + 4H U型**，圖表已鎖定防誤觸，點擊代號可開外部連結。
+**策略目標**：鎖定 **日線多頭 + 4H U型**，採上下佈局，提供最寬敞的 K 線檢視空間。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -69,12 +69,12 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# --- 改進版繪圖函數 (防誤觸設定) ---
+# --- 改進版繪圖函數 ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     
-    # 【優化】簡化名稱，避免在窄螢幕下分頁標籤被擠掉
-    tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
+    # 分頁順序：周 -> 日 -> 4H
+    tab1, tab2, tab3 = st.tabs(["🗓️ 周線 (Long)", "📅 日線 (Mid)", "⏱️ 4H (Short)"])
     
     # 共用佈局
     layout_common = dict(
@@ -84,24 +84,17 @@ def plot_interactive_chart(symbol):
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.12,
+            y=-0.12,            # 移到下方
             xanchor="center",
             x=0.5
         ),
-        # 【關鍵修正】禁止預設的拖曳 (防手滑)
-        dragmode=False, 
+        dragmode=False, # 防手滑
     )
 
-    # 定義標題樣式
     def get_title_config(text):
         return dict(text=text, x=0.02, xanchor='left', font=dict(size=16))
 
-    # 定義圖表設定 (禁止滾輪縮放)
-    config_common = {
-        'scrollZoom': False,       # 禁止滑鼠滾輪縮放
-        'displayModeBar': True,    # 顯示工具列 (需要縮放時可以自己點)
-        'displaylogo': False
-    }
+    config_common = {'scrollZoom': False, 'displayModeBar': True, 'displaylogo': False}
 
     # --- Tab 1: 周線圖 ---
     with tab1:
@@ -344,7 +337,7 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"掃描完成！共發現 {len(results)} 檔。", state="complete", expanded=False)
         st.session_state['scan_results'] = results
 
-# --- 5. 顯示結果 ---
+# --- 5. 顯示結果 (上下佈局) ---
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df_results = pd.DataFrame(st.session_state['scan_results'])
@@ -352,45 +345,46 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     
     st.success(f"🎯 發現 {len(df_results)} 檔優質標的！")
 
-    # 【佈局調整】給圖表更多空間 (55 vs 45) -> 改為 4 vs 5
-    col1, col2 = st.columns([4, 5])
+    # --- A. 上方：結果列表 (Full Width) ---
+    st.subheader("📋 掃描結果列表")
+    column_config = {
+        "代號": st.column_config.LinkColumn(
+            "代號", 
+            display_text="https://finance\\.yahoo\\.com/quote/(.*)", 
+            help="點擊開 Yahoo"
+        ),
+        "連結": None, 
+        "HV Rank": st.column_config.NumberColumn("HV", format="%.0f"),
+        "現價": st.column_config.NumberColumn(format="$%.2f"),
+        "4H 60MA": st.column_config.NumberColumn("季線", format="$%.2f"),
+        "乖離率": st.column_config.TextColumn("乖離"),
+        "產業": st.column_config.TextColumn("產業"),
+        "財報日": st.column_config.TextColumn("財報"),
+        "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍"),
+        "_sort_score": None
+    }
     
-    with col1:
-        st.subheader("📋 掃描結果列表")
-        column_config = {
-            "代號": st.column_config.LinkColumn(
-                "代號", 
-                display_text="https://finance\\.yahoo\\.com/quote/(.*)", 
-                help="點擊開 Yahoo"
-            ),
-            "連結": None, 
-            "HV Rank": st.column_config.NumberColumn("HV", format="%.0f"), # 簡化標題
-            "現價": st.column_config.NumberColumn(format="$%.2f"),
-            "4H 60MA": st.column_config.NumberColumn("季線", format="$%.2f"), # 簡化標題
-            "乖離率": st.column_config.TextColumn("乖離"), # 簡化標題
-            "產業": st.column_config.TextColumn("產業"),
-            "財報日": st.column_config.TextColumn("財報"),
-            "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍"),
-            "_sort_score": None
-        }
-        
-        df_display = df_results.copy()
-        df_display["代號"] = df_display["連結"] 
-        
-        st.dataframe(
-            df_display,
-            column_config=column_config,
-            hide_index=True,
-            use_container_width=True
-        )
+    df_display = df_results.copy()
+    df_display["代號"] = df_display["連結"] 
+    
+    st.dataframe(
+        df_display,
+        column_config=column_config,
+        hide_index=True,
+        use_container_width=True
+    )
 
-    with col2:
-        st.subheader("🕯️ K線檢視器 (防誤觸)")
-        st.info("👇 選擇股票後，可點選分頁切換時框")
-        select_options = df_results.apply(lambda x: f"{x['代號'].split('/')[-1]} - {x['產業']}", axis=1).tolist()
-        selected_option = st.selectbox("選擇股票:", select_options)
-        
-        if selected_option:
-            selected_symbol = selected_option.split(" - ")[0]
-            plot_interactive_chart(selected_symbol)
-            st.markdown(f"**提示：** 圖表已鎖定縮放。如需放大，請點擊圖表右上角工具列。")
+    st.markdown("---") # 分隔線
+
+    # --- B. 下方：K線檢視器 (Full Width) ---
+    st.subheader("🕯️ K線檢視器 (防誤觸)")
+    st.info("👇 選擇股票後，可點選分頁切換時框")
+    
+    select_options = df_results.apply(lambda x: f"{x['代號'].split('/')[-1]} - {x['產業']}", axis=1).tolist()
+    # 將 selectbox 放在這裡，選完直接在下方出圖
+    selected_option = st.selectbox("選擇股票:", select_options)
+    
+    if selected_option:
+        selected_symbol = selected_option.split(" - ")[0]
+        plot_interactive_chart(selected_symbol)
+        st.markdown(f"**提示：** 圖表已鎖定縮放。如需放大，請點擊圖表右上角工具列。")
