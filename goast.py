@@ -11,7 +11,7 @@ from datetime import datetime
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="幽靈策略掃描器 (2026)", page_icon="👻", layout="wide")
 
-# 初始化 Session State (記憶還原系統)
+# 初始化 Session State
 if 'scan_limit' not in st.session_state: st.session_state.scan_limit = 600 
 if 'min_vol_m' not in st.session_state: st.session_state.min_vol_m = 10
 if 'dist_threshold' not in st.session_state: st.session_state.dist_threshold = 8.0
@@ -23,7 +23,7 @@ if 'backup' not in st.session_state:
     }
 
 def handle_u_logic_toggle():
-    """連動邏輯：啟動時備份設定，關閉時秒速還原"""
+    """連動邏輯：啟動時備份，關閉時還原"""
     if st.session_state.u_logic_key:
         st.session_state.backup.update({
             'scan_limit': st.session_state.scan_limit,
@@ -44,7 +44,7 @@ def handle_u_logic_toggle():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (Step 1-3 文字完全回歸) ---
+# --- 2. 核心策略導引區 (Step 1-3) ---
 with st.expander("📖 幽靈策略：動態蝴蝶演化步驟 (詳細準則)", expanded=True):
     col_step1, col_step2, col_step3 = st.columns(3)
     
@@ -119,21 +119,150 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 ---
+# --- 5. 核心繪圖函數 (【修復重點】獨立 Try-Except 區塊) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"), dragmode='pan')
     config = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
-    try:
-        with tab1:
+    # Tab 1: 周線 (獨立錯誤處理)
+    with tab1:
+        try:
             df = stock.history(period="5y", interval="1wk")
-            df['MA60'] = df['Close'].rolling(60).mean()
-            fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
-                             go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
-            fig.update_layout(title=dict(text=f"{symbol} 周線", x=0.02), **layout)
-            st.plotly_chart(fig, use_container_width=True, config=config)
-        with tab2:
+            if len(df) > 0:
+                df['MA60'] = df['Close'].rolling(60).mean()
+                fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
+                                 go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
+                fig.update_layout(title=dict(text=f"{symbol} 周線", x=0.02), **layout)
+                st.plotly_chart(fig, use_container_width=True, config=config)
+            else: st.warning("周線無數據")
+        except Exception as e: st.error(f"周線圖載入失敗: {e}")
+
+    # Tab 2: 日線 (獨立錯誤處理)
+    with tab2:
+        try:
             df = stock.history(period="2y")
-            df['MA60'] = df['Close'].rolling(60).mean
+            if len(df) > 0:
+                df['MA60'] = df['Close'].rolling(60).mean()
+                fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
+                                 go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
+                fig.update_layout(title=dict(text=f"{symbol} 日線", x=0.02), **layout); fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                st.plotly_chart(fig, use_container_width=True, config=config)
+            else: st.warning("日線無數據")
+        except Exception as e: st.error(f"日線圖載入失敗: {e}")
+
+    # Tab 3: 4H 無縫 (獨立錯誤處理)
+    with tab3:
+        try:
+            df_1h = stock.history(period="6mo", interval="1h")
+            if len(df_1h) > 0:
+                df = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
+                df['MA60'] = df['Close'].rolling(60).mean(); df['date_str'] = df.index.strftime('%m-%d %H:%M')
+                fig = go.Figure([go.Candlestick(x=df['date_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
+                                 go.Scatter(x=df['date_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True)])
+                fig.update_layout(title=dict(text=f"{symbol} 4小時圖", x=0.02), **layout); fig.update_xaxes(type='category', range=[max(0, len(df)-160), len(df)])
+                st.plotly_chart(fig, use_container_width=True, config=config)
+            else: st.warning("4H 無數據")
+        except Exception as e: st.error(f"4H 圖載入失敗: {e}")
+
+# --- 6. 核心指標運算 ---
+def get_ghost_metrics(symbol, vol_threshold):
+    try:
+        stock = yf.Ticker(symbol); df_1h = stock.history(period="6mo", interval="1h")
+        if len(df_1h) < 240: return None
+        df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
+        df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
+        
+        if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
+        if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
+        if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
+        
+        log_ret = np.log(df_daily['Close'] / df_daily['Close'].shift(1))
+        vol_30d = log_ret.rolling(window=30).std() * np.sqrt(252) * 100
+        hv_rank = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
+        if hv_rank > hv_threshold: return None
+        
+        week_vol_move = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
+        cur_price = df_daily['Close'].iloc[-1]
+        move_dollar = cur_price * (week_vol_move / 100)
+
+        df_4h = df_1h.resample('4h').agg({'Close': 'last'}).dropna()
+        df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
+        dist_pct = ((df_4h['Close'].iloc[-1] - df_4h['MA60'].iloc[-1]) / df_4h['MA60'].iloc[-1]) * 100
+        if abs(dist_pct) > dist_threshold: return None 
+        
+        u_score = -abs(dist_pct)
+        if enable_u_logic:
+            y = df_4h['MA60'].tail(u_sensitivity).values; coeffs = np.polyfit(np.arange(len(y)), y, 2)
+            if coeffs[0] > 0 and (len(y)*0.3 <= -coeffs[1]/(2*coeffs[0]) <= len(y)*1.1) and (y[-1]-y[-2]) > 0 and coeffs[0] >= min_curvature:
+                u_score = (coeffs[0] * 1000) - (abs(dist_pct) * 0.5)
+            else: return None
+        
+        earnings_date = "未知"
+        cal = stock.calendar
+        if cal is not None and 'Earnings Date' in cal:
+            earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
+            
+        return {
+            "代號": symbol, "HV Rank": round(hv_rank, 1), "週波動%": round(week_vol_move, 2),
+            "預期變動$": f"±{round(move_dollar, 2)}", "現價": round(cur_price, 2),
+            "4H 60MA": round(df_4h['MA60'].iloc[-1], 2), "乖離率": f"{round(dist_pct, 2)}%",
+            "產業": translate_industry(stock.info.get('industry', 'N/A')),
+            "下次財報": earnings_date, "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", "_sort_score": u_score
+        }
+    except: return None
+
+# --- 7. 市場代號抓取 ---
+@st.cache_data(ttl=3600)
+def get_tickers_robust(choice):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    tickers = []
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        res = requests.get(url, headers=headers); df = pd.read_html(StringIO(res.text))[0]
+        col = [c for c in df.columns if 'Symbol' in c or 'Ticker' in c][0]; tickers.extend(df[col].tolist())
+    except: pass
+    try:
+        url = "https://en.wikipedia.org/wiki/Nasdaq-100"
+        res = requests.get(url, headers=headers); dfs = pd.read_html(StringIO(res.text))
+        for df in dfs:
+            col = [c for c in df.columns if 'Ticker' in c or 'Symbol' in c]
+            if col and 95 <= len(df) <= 105:
+                tickers.extend(df[col[0]].tolist()); break
+    except: pass
+    final = list(set([str(t).replace('.', '-') for t in tickers if len(str(t)) < 6]))
+    # 若抓取失敗，回傳緊急清單
+    return final if final else ["AAPL", "NVDA", "TSLA", "PLTR", "AMD"]
+
+# --- 8. 主程式執行 ---
+if st.button("🚀 啟動 Turbo 掃描", type="primary"):
+    st.session_state['scan_results'] = None
+    min_volume_threshold = st.session_state.min_vol_m * 1000000 
+    
+    with st.status("🔍 市場掃描中...", expanded=True) as status:
+        tickers = get_tickers_robust(market_choice)[:scan_limit]
+        total_tickers = len(tickers)
+        status.write(f"✅ 已獲得 {total_tickers} 檔代號，開始技術面過濾...")
+        results = []; progress = st.progress(0); count = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_ticker = {executor.submit(get_ghost_metrics, t, min_volume_threshold): t for t in tickers}
+            for future in as_completed(future_to_ticker):
+                data = future.result(); count += 1
+                progress.progress(count / total_tickers if total_tickers > 0 else 0)
+                if data: results.append(data)
+        st.session_state['scan_results'] = results
+        status.update(label=f"掃描完成！共發現 {len(results)} 檔標的。", state="complete", expanded=False)
+
+if 'scan_results' in st.session_state and st.session_state['scan_results']:
+    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False)
+    st.subheader("📋 幽靈策略篩選列表")
+    st.dataframe(df, column_config={
+        "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*)"),
+        "題材搜尋": st.column_config.LinkColumn("題材與風險", display_text="🔍 查詢"),
+        "_sort_score": None
+    }, hide_index=True, use_container_width=True)
+    st.markdown("---")
+    st.subheader("🕯️ 三週期 K 線檢視")
+    selected = st.selectbox("選擇標的:", df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist())
+    if selected: plot_interactive_chart(selected.split(" - ")[0])
