@@ -7,11 +7,11 @@ from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (全功能版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (趨勢防護版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (全功能版)")
+st.title("👻 幽靈策略掃描器 (趨勢防護版)")
 st.write("""
-**策略目標**：尋找 **低波動 (HV)** 且 **貼近 4H 60MA** 的標的，並支援 **U型反轉** 形態識別。
+**策略目標**：在 **日線多頭 (季線向上)** 的保護下，尋找 **4小時 U 型起漲點**。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -23,17 +23,19 @@ market_choice = st.sidebar.radio(
 )
 scan_limit = st.sidebar.slider("掃描數量 (前 N 大)", 50, 600, 200)
 
-st.sidebar.header("⚙️ 篩選條件")
-# 【已修復】HV Rank 加回來了！
-hv_threshold = st.sidebar.slider("HV Rank 門檻 (越低越好)", 10, 100, 60, help="數值越低代表波動越小 (結冰)，適合 Step 1 進場。")
+# --- 新增：日線趨勢濾網 (User 指定功能) ---
+st.sidebar.header("🛡️ 日線趨勢濾網 (避免接刀)")
+check_daily_ma60_up = st.sidebar.checkbox("✅ 必須：日線 60MA 向上 (排除空頭)", value=True, help="強制過濾掉日線季線還在下彎的股票，避免買到空頭反彈。")
+check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 必須：股價 > 日線 60MA", value=True, help="確保股價站上季線，屬於多頭格局。")
+
+st.sidebar.header("⚙️ 基礎篩選")
+hv_threshold = st.sidebar.slider("HV Rank 門檻 (越低越好)", 10, 100, 65)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 20, 3) 
 min_volume_threshold = min_vol_m * 1000000
 
-# --- U型戰法開關 ---
 st.sidebar.header("📈 4小時 U型戰法")
-enable_u_logic = st.sidebar.checkbox("✅ 啟用「U型數學擬合」過濾", value=True, help="打勾：嚴格篩選完美 U 型。\n取消：只篩選乖離率，不看形狀。")
-
-dist_threshold = st.sidebar.slider("距離 60MA 範圍 (%)", 0.0, 50.0, 8.0, step=0.5)
+enable_u_logic = st.sidebar.checkbox("✅ 啟用「U型數學擬合」", value=True)
+dist_threshold = st.sidebar.slider("距離 4H 60MA 範圍 (%)", 0.0, 50.0, 8.0, step=0.5)
 
 if enable_u_logic:
     u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 60, 30)
@@ -119,41 +121,58 @@ def analyze_u_shape(ma_series):
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
-        # 一次抓取數據 (日線計算 HV, 小時線計算 U型)
+        # 抓取 6 個月數據 (確保日線 MA60 有足夠資料)
         df_1h = stock.history(period="6mo", interval="1h")
         
         if len(df_1h) < 240: return None
 
-        # 1. 計算日均量 (從 1h 合成)
+        # --- A. 日線級別處理 (Daily Analysis) ---
         df_daily_synth = df_1h.resample('D').agg({
             'Volume': 'sum',
             'Close': 'last'
         }).dropna()
         
+        # 1. 計算日線 MA60
+        df_daily_synth['MA60'] = df_daily_synth['Close'].rolling(window=60).mean()
+        
+        # 檢查資料長度
+        if len(df_daily_synth) < 60: return None
+        
+        daily_ma60_now = df_daily_synth['MA60'].iloc[-1]
+        daily_ma60_prev = df_daily_synth['MA60'].iloc[-2]
+        current_price_daily = df_daily_synth['Close'].iloc[-1]
+
+        # === 🛡️ 日線趨勢過濾 (關鍵修改) ===
+        
+        # 條件 1: 日線 MA60 必須向上 (斜率 > 0)
+        if check_daily_ma60_up:
+            if daily_ma60_now <= daily_ma60_prev: 
+                return None # 季線還在跌，淘汰
+        
+        # 條件 2: 股價必須在 日線 MA60 之上
+        if check_price_above_daily_ma60:
+            if current_price_daily < daily_ma60_now:
+                return None # 股價在季線下，淘汰
+
+        # 2. 成交量過濾
         avg_volume = df_daily_synth['Volume'].rolling(window=20).mean().iloc[-1]
         if avg_volume < vol_threshold: return None
 
-        # --- 【已修復】計算 HV Rank ---
+        # 3. HV Rank 過濾
         close_daily = df_daily_synth['Close']
-        if len(close_daily) < 30: return None
-        
         log_ret = np.log(close_daily / close_daily.shift(1))
-        # 年化歷史波動率 (30天)
         vol_30d = log_ret.rolling(window=30).std() * np.sqrt(252) * 100
         
         current_hv = vol_30d.iloc[-1]
         min_hv = vol_30d.min()
         max_hv = vol_30d.max()
         
-        # 避免分母為 0
         if max_hv == min_hv: return None
-        
         hv_rank = ((current_hv - min_hv) / (max_hv - min_hv)) * 100
         
-        # HV 過濾：如果波動太大，直接淘汰
         if hv_rank > hv_threshold: return None
 
-        # 2. 合成 4H K線 (用於 U 型判斷)
+        # --- B. 4小時級別處理 (4H Analysis) ---
         df_4h = df_1h.resample('4h').agg({
             'Close': 'last', 
             'Volume': 'sum'
@@ -166,14 +185,14 @@ def get_ghost_metrics(symbol, vol_threshold):
         ma_segment = df_4h['MA60'].iloc[-u_sensitivity:]
         if ma_segment.isnull().values.any() or len(ma_segment) < u_sensitivity: return None
         
-        current_price = df_4h['Close'].iloc[-1]
-        ma60_now = ma_segment.iloc[-1]
-        dist_pct = ((current_price - ma60_now) / ma60_now) * 100
+        current_price_4h = df_4h['Close'].iloc[-1]
+        ma60_now_4h = ma_segment.iloc[-1]
+        dist_pct = ((current_price_4h - ma60_now_4h) / ma60_now_4h) * 100
 
         # 乖離率過濾
         if abs(dist_pct) > dist_threshold: return None 
         
-        # --- U 型檢測邏輯 ---
+        # --- C. U 型檢測邏輯 ---
         u_score = 0
         curvature = 0
         status_msg = "符合乖離"
@@ -190,7 +209,7 @@ def get_ghost_metrics(symbol, vol_threshold):
             u_score = -abs(dist_pct)
             curvature = 0 
 
-        # --- 期權存在性檢查 ---
+        # --- D. 期權檢查 ---
         try:
             if not stock.options: 
                 return None
@@ -199,9 +218,10 @@ def get_ghost_metrics(symbol, vol_threshold):
 
         return {
             "代號": symbol,
-            "HV Rank": round(hv_rank, 1), # 顯示 HV Rank
-            "現價": round(current_price, 2),
-            "4H 60MA": round(ma60_now, 2),
+            "HV Rank": round(hv_rank, 1),
+            "現價": round(current_price_4h, 2),
+            "4H 60MA": round(ma60_now_4h, 2),
+            "日線 60MA": "⬆️ 翻揚" if daily_ma60_now > daily_ma60_prev else "⬇️ 下彎",
             "U型強度": round(curvature * 1000, 2),
             "乖離率": f"{round(dist_pct, 2)}%",
             "狀態": status_msg,
@@ -221,8 +241,12 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         target_tickers = get_combined_tickers(market_choice, scan_limit)
         
         status.write(f"🔥 Turbo 模式啟動！ (核心數: {max_workers})")
-        status.write(f"🔍 目標: {len(target_tickers)} 檔股票 | 來自: {market_choice}")
-        status.write(f"⚙️ 條件：HV Rank < {hv_threshold} | 日均量 > {min_vol_m}M")
+        
+        # 顯示過濾條件資訊
+        msg_trend = "已啟用" if check_daily_ma60_up else "未啟用"
+        msg_u = "已啟用" if enable_u_logic else "未啟用"
+        
+        status.write(f"🛡️ 日線趨勢過濾: {msg_trend} | U型過濾: {msg_u}")
         
         results = []
         completed_count = 0
@@ -248,12 +272,13 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         df_results = pd.DataFrame(results)
         df_results = df_results.sort_values(by="_sort_score", ascending=False)
         
-        st.success(f"🎯 發現 {len(df_results)} 檔潛力股！")
+        st.success(f"🎯 發現 {len(df_results)} 檔優質標的！")
         
         column_config = {
-            "HV Rank": st.column_config.NumberColumn("HV波動 (低=好)", format="%.1f"),
+            "HV Rank": st.column_config.NumberColumn("HV波動", format="%.1f"),
             "現價": st.column_config.NumberColumn(format="$%.2f"),
-            "4H 60MA": st.column_config.NumberColumn(format="$%.2f"),
+            "4H 60MA": st.column_config.NumberColumn("4H 季線", format="$%.2f"),
+            "日線 60MA": st.column_config.TextColumn("日線趨勢"),
             "乖離率": st.column_config.TextColumn("距離均線"),
             "狀態": st.column_config.TextColumn("型態"),
             "_sort_score": None,
@@ -275,4 +300,4 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
             use_container_width=True
         )
     else:
-        st.warning("⚠️ 沒掃到符合條件的股票。\n建議：\n1. 放寬「HV Rank 門檻」\n2. 擴大「距離 60MA 範圍」")
+        st.warning("⚠️ 沒掃到符合條件的股票。\n可能原因：\n1. 「日線趨勢」條件太嚴格（現在是修正期？）\n2. 嘗試取消勾選「日線 60MA 向上」看看有無反彈股。")
