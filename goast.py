@@ -15,6 +15,7 @@ st.set_page_config(page_title="幽靈策略掃描器", page_icon="👻", layout=
 if 'scan_limit' not in st.session_state: st.session_state.scan_limit = 200
 if 'min_vol_m' not in st.session_state: st.session_state.min_vol_m = 10
 if 'dist_threshold' not in st.session_state: st.session_state.dist_threshold = 8.0
+if 'u_sensitivity' not in st.session_state: st.session_state.u_sensitivity = 30 # 預設平衡值
 
 def update_params_on_u_logic():
     """當 U 型戰法開關切換時的連動邏輯"""
@@ -22,6 +23,8 @@ def update_params_on_u_logic():
         st.session_state.scan_limit = 600
         st.session_state.min_vol_m = 1
         st.session_state.dist_threshold = 50.0
+        # 【新增】連動 U 型敏感度到最高值 (60)
+        st.session_state.u_sensitivity = 60
 
 st.title("👻 幽靈策略掃描器")
 
@@ -48,7 +51,7 @@ with st.expander("📖 幽靈策略：動態蝴蝶演化步驟", expanded=True):
         **成功指標**：IV 顯著擴張（水結成冰），部位體積因波動迅速膨脹。  
         **❌ 失敗判定**：
         - **動能**：股價觸及賣出價後轉頭跌破成本區。
-        - **波動**：IV 下降（冰塊融化），加碼 Call 價值停滯。
+        - **波動**：IV 下項（冰塊融化），加碼 Call 價值停滯。
         """)
     with col_step3:
         st.subheader("第三步：轉化蝴蝶")
@@ -73,16 +76,15 @@ market_choice = st.sidebar.radio(
 )
 
 st.sidebar.header("📈 4小時 U型戰法")
-# 【預設關閉 + 連動觸發】
 enable_u_logic = st.sidebar.checkbox(
     "✅ 啟用「U型數學擬合」", 
     value=False, 
     key='u_logic_key', 
     on_change=update_params_on_u_logic,
-    help="勾選後將自動將掃描數量設為最高，並放寬成交量與距離限制。"
+    help="勾選後將自動放寬篩選限制並將敏感度調至最高。"
 )
 
-# 使用 key 連動 session_state 的滑桿
+# 掃描數量連動
 scan_limit = st.sidebar.slider("掃描數量 (前 N 大)", 50, 600, key='scan_limit')
 
 st.sidebar.header("🛡️ 日線趨勢濾網")
@@ -94,11 +96,12 @@ hv_threshold = st.sidebar.slider("HV Rank 門檻 (越低越好)", 10, 100, 30)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
 min_volume_threshold = min_vol_m * 1000000
 
-# 距離 60MA 範圍也使用連動 key
+# 距離 60MA 連動
 dist_threshold = st.sidebar.slider("距離 4H 60MA 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
 
+# 【已修復】U型敏感度連動到 session_state
 if enable_u_logic:
-    u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 60, 30)
+    u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 60, key='u_sensitivity')
     min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
 else:
     u_sensitivity = 30
@@ -139,17 +142,17 @@ def plot_interactive_chart(symbol):
     def get_title_config(text): return dict(text=text, x=0.02, xanchor='left', font=dict(size=16))
     config_common = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
-    # 週線、日線、4小時圖繪製邏輯... (與前一版相同)
     with tab1:
         try:
             df_w = stock.history(period="5y", interval="1wk")
             df_w['MA20'] = df_w['Close'].rolling(window=20).mean(); df_w['MA60'] = df_w['Close'].rolling(window=60).mean()
             fig_w = go.Figure()
             fig_w.add_trace(go.Candlestick(x=df_w.index, open=df_w['Open'], high=df_w['High'], low=df_w['Low'], close=df_w['Close'], name='周K'))
-            fig_w.add_trace(go.Scatter(x=df_w.index, y=df_w['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1)))
-            fig_w.add_trace(go.Scatter(x=df_w.index, y=df_w['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3)))
+            fig_w.add_trace(go.Scatter(x=df_w.index, y=df_w['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1), connectgaps=True))
+            fig_w.add_trace(go.Scatter(x=df_w.index, y=df_w['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True))
             fig_w.update_layout(title=get_title_config(f"{symbol} 周線"), yaxis_title="股價", **layout_common)
-            fig_w.update_xaxes(range=[df_w.index[-100], df_w.index[-1] + pd.Timedelta(weeks=1)])
+            if len(df_w) > 100:
+                fig_w.update_xaxes(range=[df_w.index[-100], df_w.index[-1] + pd.Timedelta(weeks=1)])
             st.plotly_chart(fig_w, use_container_width=True, config=config_common)
         except: pass
     with tab2:
@@ -158,10 +161,11 @@ def plot_interactive_chart(symbol):
             df_d['MA20'] = df_d['Close'].rolling(window=20).mean(); df_d['MA60'] = df_d['Close'].rolling(window=60).mean()
             fig_d = go.Figure()
             fig_d.add_trace(go.Candlestick(x=df_d.index, open=df_d['Open'], high=df_d['High'], low=df_d['Low'], close=df_d['Close'], name='日K'))
-            fig_d.add_trace(go.Scatter(x=df_d.index, y=df_d['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1)))
-            fig_d.add_trace(go.Scatter(x=df_d.index, y=df_d['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3)))
+            fig_d.add_trace(go.Scatter(x=df_d.index, y=df_d['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1), connectgaps=True))
+            fig_d.add_trace(go.Scatter(x=df_d.index, y=df_d['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True))
             fig_d.update_layout(title=get_title_config(f"{symbol} 日線"), yaxis_title="股價", **layout_common)
-            fig_d.update_xaxes(range=[df_d.index[-150], df_d.index[-1] + pd.Timedelta(days=2)], rangebreaks=[dict(bounds=["sat", "mon"])])
+            if len(df_d) > 150:
+                fig_d.update_xaxes(range=[df_d.index[-150], df_d.index[-1] + pd.Timedelta(days=2)], rangebreaks=[dict(bounds=["sat", "mon"])])
             st.plotly_chart(fig_d, use_container_width=True, config=config_common)
         except: pass
     with tab3:
@@ -172,8 +176,8 @@ def plot_interactive_chart(symbol):
             df_4h['date_str'] = df_4h.index.strftime('%m-%d %H:%M')
             fig_4h = go.Figure()
             fig_4h.add_trace(go.Candlestick(x=df_4h['date_str'], open=df_4h['Open'], high=df_4h['High'], low=df_4h['Low'], close=df_4h['Close'], name='4H K'))
-            fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1)))
-            fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3)))
+            fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA20'], mode='lines', name='MA20', line=dict(color='royalblue', width=1), connectgaps=True))
+            fig_4h.add_trace(go.Scatter(x=df_4h['date_str'], y=df_4h['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True))
             fig_4h.update_layout(title=get_title_config(f"{symbol} 4小時圖"), yaxis_title="股價", **layout_common)
             fig_4h.update_xaxes(type='category', range=[max(0, len(df_4h) - 160), len(df_4h)])
             st.plotly_chart(fig_4h, use_container_width=True, config=config_common)
@@ -214,6 +218,7 @@ def get_ghost_metrics(symbol, vol_threshold):
         if abs(dist_pct) > dist_threshold: return None 
         u_score = -abs(dist_pct)
         if enable_u_logic:
+            # 使用當前滑桿設定的敏感度進行擬合
             y = df_4h['MA60'].tail(u_sensitivity).values; x = np.arange(len(y)); coeffs = np.polyfit(x, y, 2)
             if coeffs[0] > 0 and (len(y)*0.3 <= -coeffs[1]/(2*coeffs[0]) <= len(y)*1.1) and (y[-1]-y[-2]) > 0 and coeffs[0] >= min_curvature:
                 u_score = (coeffs[0] * 1000) - (abs(dist_pct) * 0.5)
@@ -233,7 +238,7 @@ def get_ghost_metrics(symbol, vol_threshold):
 # --- 5. 執行邏輯 ---
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     st.session_state['scan_results'] = None
-    with st.status("依據幽靈策略掃描標的中...", expanded=True) as status:
+    with st.status("正在依據幽靈策略掃描標的...", expanded=True) as status:
         tickers = list(set(get_sp500_tickers() + get_nasdaq100_tickers()))[:scan_limit]
         total_tickers = len(tickers); results = []; progress_bar = st.progress(0); completed_count = 0
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -244,7 +249,7 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
                 completed_count += 1
                 progress_bar.progress(completed_count / total_tickers)
         st.session_state['scan_results'] = results
-        status.update(label=f"完成！發現 {len(results)} 檔符合條件標的。", state="complete", expanded=False)
+        status.update(label=f"掃描完成！發現 {len(results)} 檔標的。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank", ascending=True)
@@ -254,6 +259,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         "連結": None, "_sort_score": None, "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍")
     }, hide_index=True, use_container_width=True)
     st.markdown("---")
-    st.subheader("🕯️ 三週期 K 線檢視 (防手滑)")
+    st.subheader("🕯️ 三週期 K 線檢視")
     selected_option = st.selectbox("選擇股票:", df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist())
     if selected_option: plot_interactive_chart(selected_option.split(" - ")[0])
