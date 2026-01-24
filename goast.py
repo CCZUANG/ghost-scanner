@@ -7,16 +7,15 @@ from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (雙市場版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (期權防呆版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (雙市場版)")
+st.title("👻 幽靈策略掃描器 (期權防呆版)")
 st.write("""
-**策略目標**：在 **S&P 500** 與 **NASDAQ 100** 中，尋找「4小時 60MA 完美 U 型反轉」的起漲點。
+**策略目標**：尋找 **S&P 500 / NASDAQ 100** 中，符合 **U型反轉** 且 **確認有期權** 的標的。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
 st.sidebar.header("🎯 市場與數量")
-# 新增：市場選擇
 market_choice = st.sidebar.radio(
     "選擇掃描市場", 
     ["S&P 500 (大型股)", "NASDAQ 100 (科技股)", "🔥 全火力 (兩者全掃)"],
@@ -25,7 +24,6 @@ market_choice = st.sidebar.radio(
 scan_limit = st.sidebar.slider("掃描數量 (前 N 大)", 50, 600, 200)
 
 st.sidebar.header("⚙️ 篩選條件")
-hv_threshold = st.sidebar.slider("HV Rank 門檻", 10, 90, 65)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 20, 3) 
 min_volume_threshold = min_vol_m * 1000000
 
@@ -57,7 +55,6 @@ def get_nasdaq100_tickers():
     try:
         url = "https://en.wikipedia.org/wiki/Nasdaq-100"
         response = requests.get(url, headers=headers)
-        # Wikipedia 結構可能會變，通常是 table[4] 或找含有 'Ticker' 的表格
         dfs = pd.read_html(StringIO(response.text))
         for df in dfs:
             if 'Ticker' in df.columns:
@@ -80,10 +77,8 @@ def get_combined_tickers(choice, limit):
     if "NASDAQ" in choice or "全火力" in choice:
         nasdaq = get_nasdaq100_tickers()
     
-    # 合併並去除重複 (例如 AAPL, NVDA 都在兩邊，只需掃一次)
     combined = list(set(sp500 + nasdaq))
     
-    # 如果網路爬蟲失敗，回傳備用名單
     if not combined:
         return ['TSM', 'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'NFLX', 'PLTR', 'LUNR', 'COIN', 'MSTR', 'QQQ', 'SPY']
     
@@ -101,7 +96,6 @@ def analyze_u_shape(ma_series):
         vertex_x = -b / (2 * a)
         len_window = len(y)
         
-        # 谷底位置判定
         if not (len_window * 0.3 <= vertex_x <= len_window * 1.1):
             return False, a
             
@@ -150,6 +144,16 @@ def get_ghost_metrics(symbol, vol_threshold):
         
         if abs(dist_pct) > dist_threshold: return None 
 
+        # --- 【新增】最終防線：期權存在性檢查 ---
+        # 只有當股票通過上述所有困難篩選後，才檢查這一步（為了節省時間）
+        try:
+            # 嘗試獲取期權到期日列表，如果為空或報錯，代表無期權
+            if not stock.options: 
+                return None
+        except:
+            return None
+
+        # 計算排序分數
         u_score = (curvature * 1000) - (abs(dist_pct) * 0.5)
 
         return {
@@ -158,67 +162,4 @@ def get_ghost_metrics(symbol, vol_threshold):
             "4H 60MA": round(ma60_now, 2),
             "U型強度": round(curvature * 1000, 2),
             "乖離率": f"{round(dist_pct, 2)}%",
-            "狀態": "✅ 完美微笑",
-            "_sort_score": u_score,
-            "_dist_raw": abs(dist_pct)
-        }
-    except:
-        return None
-
-# --- 4. 主程式執行邏輯 ---
-
-if st.button("🚀 啟動 Turbo 掃描", type="primary"):
-    status_text = f"正在下載 {market_choice} 清單..."
-    progress_bar = st.progress(0)
-    
-    with st.status(status_text, expanded=True) as status:
-        target_tickers = get_combined_tickers(market_choice, scan_limit)
-        
-        status.write(f"🔥 Turbo 模式啟動！ (核心數: {max_workers})")
-        status.write(f"🔍 目標: {len(target_tickers)} 檔股票 | 來自: {market_choice}")
-        
-        results = []
-        completed_count = 0
-        total_count = len(target_tickers)
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_ticker = {
-                executor.submit(get_ghost_metrics, t, min_volume_threshold): t 
-                for t in target_tickers
-            }
-            
-            for future in as_completed(future_to_ticker):
-                data = future.result()
-                if data:
-                    results.append(data)
-                
-                completed_count += 1
-                progress_bar.progress(completed_count / total_count)
-            
-        status.update(label=f"掃描完成！共發現 {len(results)} 檔。", state="complete", expanded=False)
-
-    if results:
-        df_results = pd.DataFrame(results)
-        df_results = df_results.sort_values(by="U型強度", ascending=False)
-        
-        st.success(f"🎯 發現 {len(df_results)} 檔 U 型潛力股！")
-        
-        st.dataframe(
-            df_results,
-            column_config={
-                "U型強度": st.column_config.ProgressColumn(
-                    "U型分數", 
-                    min_value=0, max_value=20, format="%.1f"
-                ),
-                "現價": st.column_config.NumberColumn(format="$%.2f"),
-                "4H 60MA": st.column_config.NumberColumn(format="$%.2f"),
-                "乖離率": st.column_config.TextColumn("距離均線"),
-                "狀態": st.column_config.TextColumn("型態"),
-                "_sort_score": None,
-                "_dist_raw": None
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-    else:
-        st.warning("⚠️ 沒掃到符合條件的股票。\n建議：\n1. 擴大「距離 60MA 範圍」\n2. 降低「最小彎曲度」")
+            "狀態": "✅ 完美微笑
