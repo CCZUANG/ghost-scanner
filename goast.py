@@ -44,7 +44,7 @@ def handle_u_logic_toggle():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (Step 1-3) ---
+# --- 2. 核心策略導引區 ---
 with st.expander("📖 幽靈策略：動態蝴蝶演化步驟 (詳細準則)", expanded=True):
     col_step1, col_step2, col_step3 = st.columns(3)
     
@@ -119,15 +119,14 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 (【修復重點】獨立 Try-Except 區塊) ---
+# --- 5. 核心繪圖函數 (修正歷史長度) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"), dragmode='pan')
     config = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
-    # Tab 1: 周線 (獨立錯誤處理)
-    with tab1:
+    with tab1: # 周線
         try:
             df = stock.history(period="5y", interval="1wk")
             if len(df) > 0:
@@ -139,8 +138,7 @@ def plot_interactive_chart(symbol):
             else: st.warning("周線無數據")
         except Exception as e: st.error(f"周線圖載入失敗: {e}")
 
-    # Tab 2: 日線 (獨立錯誤處理)
-    with tab2:
+    with tab2: # 日線
         try:
             df = stock.history(period="2y")
             if len(df) > 0:
@@ -152,16 +150,22 @@ def plot_interactive_chart(symbol):
             else: st.warning("日線無數據")
         except Exception as e: st.error(f"日線圖載入失敗: {e}")
 
-    # Tab 3: 4H 無縫 (獨立錯誤處理)
-    with tab3:
+    with tab3: # 4H 無縫 (修正：拉長歷史到 1y)
         try:
-            df_1h = stock.history(period="6mo", interval="1h")
+            # 【關鍵修改】改為 period="1y" 以獲取更多 K 棒
+            df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
                 df = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
                 df['MA60'] = df['Close'].rolling(60).mean(); df['date_str'] = df.index.strftime('%m-%d %H:%M')
+                
                 fig = go.Figure([go.Candlestick(x=df['date_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
                                  go.Scatter(x=df['date_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True)])
-                fig.update_layout(title=dict(text=f"{symbol} 4小時圖", x=0.02), **layout); fig.update_xaxes(type='category', range=[max(0, len(df)-160), len(df)])
+                
+                fig.update_layout(title=dict(text=f"{symbol} 4小時圖", x=0.02), **layout)
+                
+                # 預設顯示最後 160 根，但前面有更多資料可滑動
+                fig.update_xaxes(type='category', range=[max(0, len(df)-160), len(df)])
+                
                 st.plotly_chart(fig, use_container_width=True, config=config)
             else: st.warning("4H 無數據")
         except Exception as e: st.error(f"4H 圖載入失敗: {e}")
@@ -169,7 +173,8 @@ def plot_interactive_chart(symbol):
 # --- 6. 核心指標運算 ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
-        stock = yf.Ticker(symbol); df_1h = stock.history(period="6mo", interval="1h")
+        # 【關鍵修改】計算指標時也使用 1y，確保數據一致性
+        stock = yf.Ticker(symbol); df_1h = stock.history(period="1y", interval="1h")
         if len(df_1h) < 240: return None
         df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
         df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
@@ -232,7 +237,6 @@ def get_tickers_robust(choice):
                 tickers.extend(df[col[0]].tolist()); break
     except: pass
     final = list(set([str(t).replace('.', '-') for t in tickers if len(str(t)) < 6]))
-    # 若抓取失敗，回傳緊急清單
     return final if final else ["AAPL", "NVDA", "TSLA", "PLTR", "AMD"]
 
 # --- 8. 主程式執行 ---
@@ -255,7 +259,8 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"掃描完成！共發現 {len(results)} 檔標的。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False)
+    # 【修正】排序改回 HV Rank Ascending
+    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank", ascending=True)
     st.subheader("📋 幽靈策略篩選列表")
     st.dataframe(df, column_config={
         "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*)"),
