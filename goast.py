@@ -9,11 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (全歷史版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (緊密版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (全歷史版)")
+st.title("👻 幽靈策略掃描器 (緊密版)")
 st.write("""
-**策略目標**：鎖定 **日線多頭 + 4H U型**，圖表載入完整歷史數據，可自由縮放檢視過去走勢。
+**策略目標**：鎖定 **日線多頭 + 4H U型**，已優化 4H K線顯示，移除休市空檔，讓圖形更緊密連續。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -69,10 +69,11 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# --- 改進版繪圖函數 (全數據 + 視角鎖定) ---
+# --- 改進版繪圖函數 (移除休市空檔) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     
+    # 分頁順序：周 -> 日 -> 4H
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線 (Long)", "📅 日線 (Mid)", "⏱️ 4H (Short)"])
     
     # 共用佈局
@@ -87,8 +88,6 @@ def plot_interactive_chart(symbol):
             xanchor="center",
             x=0.5
         ),
-        # 【修改】改回 'pan' (平移)，這樣手指拖動可以看到前面的 K 棒
-        # 如果設為 False，就完全動不了，沒辦法看歷史數據
         dragmode='pan', 
     )
 
@@ -100,7 +99,6 @@ def plot_interactive_chart(symbol):
     # --- Tab 1: 周線圖 ---
     with tab1:
         try:
-            # 載入完整 5 年數據
             df_w = stock.history(period="5y", interval="1wk")
             if len(df_w) < 60:
                 st.warning("周線數據不足")
@@ -124,11 +122,9 @@ def plot_interactive_chart(symbol):
                 
                 fig_w.update_layout(title=get_title_config(f"{symbol} 周線"), yaxis_title="股價", **layout_common)
                 
-                # 【關鍵修改】設定預設顯示範圍 (Range)，但不刪除數據
-                # 預設顯示最後 100 週
                 if len(df_w) > 100:
                     start_view = df_w.index[-100]
-                    end_view = df_w.index[-1] + pd.Timedelta(weeks=1) # 多留一點右邊空白
+                    end_view = df_w.index[-1] + pd.Timedelta(weeks=1)
                     fig_w.update_xaxes(range=[start_view, end_view])
                 
                 st.plotly_chart(fig_w, use_container_width=True, config=config_common)
@@ -138,7 +134,6 @@ def plot_interactive_chart(symbol):
     # --- Tab 2: 日線圖 ---
     with tab2:
         try:
-            # 載入完整 2 年數據
             df_d = stock.history(period="2y")
             if len(df_d) < 60:
                 st.warning("日線數據不足")
@@ -162,22 +157,23 @@ def plot_interactive_chart(symbol):
                 
                 fig_d.update_layout(title=get_title_config(f"{symbol} 日線"), yaxis_title="股價", **layout_common)
                 
-                # 【關鍵修改】預設顯示最後 150 天
+                # 日線移除週末
+                rangebreaks_settings = [dict(bounds=["sat", "mon"])]
+                
                 if len(df_d) > 150:
                     start_view = df_d.index[-150]
                     end_view = df_d.index[-1] + pd.Timedelta(days=2)
-                    fig_d.update_xaxes(range=[start_view, end_view], rangebreaks=[dict(bounds=["sat", "mon"])])
+                    fig_d.update_xaxes(range=[start_view, end_view], rangebreaks=rangebreaks_settings)
                 else:
-                    fig_d.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                    fig_d.update_xaxes(rangebreaks=rangebreaks_settings)
 
                 st.plotly_chart(fig_d, use_container_width=True, config=config_common)
         except Exception as e:
             st.error(f"日線圖錯誤: {e}")
 
-    # --- Tab 3: 4小時圖 ---
+    # --- Tab 3: 4小時圖 (重點修改區) ---
     with tab3:
         try:
-            # 載入完整 6 個月數據 (約 600-700 根)
             df_1h = stock.history(period="6mo", interval="1h")
             if len(df_1h) < 100:
                 st.warning("4H 數據不足")
@@ -210,13 +206,19 @@ def plot_interactive_chart(symbol):
                 
                 fig_4h.update_layout(title=get_title_config(f"{symbol} 4小時圖"), yaxis_title="股價", **layout_common)
                 
-                # 【關鍵修改】預設顯示最後 80 根，但保留前面所有的資料
+                # 【關鍵修改】同時隱藏「週末」和「每日休市時段(16:00-09:30)」
+                # 這樣 K 棒就不會因為晚上沒交易而隔很開
+                rangebreaks_settings = [
+                    dict(bounds=["sat", "mon"]),           # 隱藏週末
+                    dict(bounds=[16, 9.5], pattern="hour") # 隱藏美股休市 (16:00 - 9:30)
+                ]
+                
                 if len(df_4h) > 80:
                     start_view = df_4h.index[-80]
                     end_view = df_4h.index[-1] + pd.Timedelta(hours=4)
-                    fig_4h.update_xaxes(range=[start_view, end_view], rangebreaks=[dict(bounds=["sat", "mon"])])
+                    fig_4h.update_xaxes(range=[start_view, end_view], rangebreaks=rangebreaks_settings)
                 else:
-                    fig_4h.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                    fig_4h.update_xaxes(rangebreaks=rangebreaks_settings)
 
                 st.plotly_chart(fig_4h, use_container_width=True, config=config_common)
                 
@@ -367,7 +369,7 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"掃描完成！共發現 {len(results)} 檔。", state="complete", expanded=False)
         st.session_state['scan_results'] = results
 
-# --- 5. 顯示結果 (上下佈局) ---
+# --- 5. 顯示結果 ---
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df_results = pd.DataFrame(st.session_state['scan_results'])
@@ -414,4 +416,4 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     if selected_option:
         selected_symbol = selected_option.split(" - ")[0]
         plot_interactive_chart(selected_symbol)
-        st.markdown(f"**操作提示：**\n* 畫面已載入歷史數據，請使用 **「平移 (Pan)」** 或 **「縮小 (Zoom Out)」** 來查看更多 K 棒。\n* 手指在圖表上拖曳可移動時間軸。")
+        st.markdown(f"**操作提示：**\n* 畫面已自動隱藏美股夜間休市時段，讓 K 棒連接更緊密。")
