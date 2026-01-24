@@ -34,7 +34,8 @@ def handle_u_logic_toggle():
         st.session_state.scan_limit = 600
         st.session_state.min_vol_m = 1
         st.session_state.dist_threshold = 50.0
-        st.session_state.u_sensitivity = 60
+        # 【修改】啟動時自動跳轉至新的最大值 120
+        st.session_state.u_sensitivity = 120
     else:
         st.session_state.scan_limit = st.session_state.backup['scan_limit']
         st.session_state.min_vol_m = st.session_state.backup['min_vol_m']
@@ -95,7 +96,8 @@ min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vo
 dist_threshold = st.sidebar.slider("距離 MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
 
 if enable_u_logic:
-    u_sensitivity = st.sidebar.slider("U型敏感度", 20, 60, key='u_sensitivity')
+    # 【修改】上限擴大至 120
+    u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 120, key='u_sensitivity')
     min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
 else:
     u_sensitivity, min_curvature = 30, 0.003
@@ -119,46 +121,40 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 (修正：長歷史數據) ---
+# --- 5. 核心繪圖函數 ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"), dragmode='pan')
     config = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
-    with tab1: # 周線 (改為 max)
+    with tab1: # 周線 (max)
         try:
-            # 【修改】使用 max 獲取完整歷史
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
                 fig.update_layout(title=dict(text=f"{symbol} 周線 (全歷史)", x=0.02), **layout)
-                # 預設顯示最後 150 週，可往左滑
-                if len(df) > 150:
-                    fig.update_xaxes(range=[df.index[-150], df.index[-1]])
+                if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True, config=config)
             else: st.warning("周線無數據")
         except Exception as e: st.error(f"周線圖載入失敗: {e}")
 
-    with tab2: # 日線 (改為 10y)
+    with tab2: # 日線 (10y)
         try:
-            # 【修改】使用 10y 提供充足歷史
             df = stock.history(period="10y")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
                 fig.update_layout(title=dict(text=f"{symbol} 日線 (10年)", x=0.02), **layout); fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
-                # 預設顯示最後 200 天，可往左滑
-                if len(df) > 200:
-                    fig.update_xaxes(range=[df.index[-200], df.index[-1]])
+                if len(df) > 200: fig.update_xaxes(range=[df.index[-200], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True, config=config)
             else: st.warning("日線無數據")
         except Exception as e: st.error(f"日線圖載入失敗: {e}")
 
-    with tab3: # 4H (維持 1y)
+    with tab3: # 4H (1y)
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
@@ -199,6 +195,7 @@ def get_ghost_metrics(symbol, vol_threshold):
         
         u_score = -abs(dist_pct)
         if enable_u_logic:
+            # 使用擴充後的 sensitivity
             y = df_4h['MA60'].tail(u_sensitivity).values; coeffs = np.polyfit(np.arange(len(y)), y, 2)
             if coeffs[0] > 0 and (len(y)*0.3 <= -coeffs[1]/(2*coeffs[0]) <= len(y)*1.1) and (y[-1]-y[-2]) > 0 and coeffs[0] >= min_curvature:
                 u_score = (coeffs[0] * 1000) - (abs(dist_pct) * 0.5)
