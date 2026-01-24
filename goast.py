@@ -23,7 +23,7 @@ if 'backup' not in st.session_state:
     }
 
 def handle_u_logic_toggle():
-    """連動邏輯：啟動時備份，關閉時還原"""
+    """連動邏輯：啟動時備份設定，關閉時秒速還原"""
     if st.session_state.u_logic_key:
         st.session_state.backup.update({
             'scan_limit': st.session_state.scan_limit,
@@ -101,7 +101,7 @@ else:
     u_sensitivity, min_curvature = 30, 0.003
 max_workers = st.sidebar.slider("🚀 平行核心數", 1, 32, 16)
 
-# --- 4. 產業翻譯字典 ---
+# --- 4. 產業翻譯 ---
 INDUSTRY_MAP = {
     "technology": "科技", "software": "軟體服務", "semiconductors": "半導體",
     "financial": "金融銀行", "healthcare": "醫療保健", "biotechnology": "生物科技",
@@ -119,53 +119,54 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 (修正歷史長度) ---
+# --- 5. 核心繪圖函數 (修正：長歷史數據) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"), dragmode='pan')
     config = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
-    with tab1: # 周線
+    with tab1: # 周線 (改為 max)
         try:
-            df = stock.history(period="5y", interval="1wk")
+            # 【修改】使用 max 獲取完整歷史
+            df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
-                fig.update_layout(title=dict(text=f"{symbol} 周線", x=0.02), **layout)
+                fig.update_layout(title=dict(text=f"{symbol} 周線 (全歷史)", x=0.02), **layout)
+                # 預設顯示最後 150 週，可往左滑
+                if len(df) > 150:
+                    fig.update_xaxes(range=[df.index[-150], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True, config=config)
             else: st.warning("周線無數據")
         except Exception as e: st.error(f"周線圖載入失敗: {e}")
 
-    with tab2: # 日線
+    with tab2: # 日線 (改為 10y)
         try:
-            df = stock.history(period="2y")
+            # 【修改】使用 10y 提供充足歷史
+            df = stock.history(period="10y")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
-                fig.update_layout(title=dict(text=f"{symbol} 日線", x=0.02), **layout); fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                fig.update_layout(title=dict(text=f"{symbol} 日線 (10年)", x=0.02), **layout); fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                # 預設顯示最後 200 天，可往左滑
+                if len(df) > 200:
+                    fig.update_xaxes(range=[df.index[-200], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True, config=config)
             else: st.warning("日線無數據")
         except Exception as e: st.error(f"日線圖載入失敗: {e}")
 
-    with tab3: # 4H 無縫 (修正：拉長歷史到 1y)
+    with tab3: # 4H (維持 1y)
         try:
-            # 【關鍵修改】改為 period="1y" 以獲取更多 K 棒
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
                 df = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
                 df['MA60'] = df['Close'].rolling(60).mean(); df['date_str'] = df.index.strftime('%m-%d %H:%M')
-                
                 fig = go.Figure([go.Candlestick(x=df['date_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
                                  go.Scatter(x=df['date_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True)])
-                
-                fig.update_layout(title=dict(text=f"{symbol} 4小時圖", x=0.02), **layout)
-                
-                # 預設顯示最後 160 根，但前面有更多資料可滑動
-                fig.update_xaxes(type='category', range=[max(0, len(df)-160), len(df)])
-                
+                fig.update_layout(title=dict(text=f"{symbol} 4小時圖 (1年)", x=0.02), **layout); fig.update_xaxes(type='category', range=[max(0, len(df)-160), len(df)])
                 st.plotly_chart(fig, use_container_width=True, config=config)
             else: st.warning("4H 無數據")
         except Exception as e: st.error(f"4H 圖載入失敗: {e}")
@@ -173,7 +174,6 @@ def plot_interactive_chart(symbol):
 # --- 6. 核心指標運算 ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
-        # 【關鍵修改】計算指標時也使用 1y，確保數據一致性
         stock = yf.Ticker(symbol); df_1h = stock.history(period="1y", interval="1h")
         if len(df_1h) < 240: return None
         df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
@@ -259,7 +259,6 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"掃描完成！共發現 {len(results)} 檔標的。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    # 【修正】排序改回 HV Rank Ascending
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank", ascending=True)
     st.subheader("📋 幽靈策略篩選列表")
     st.dataframe(df, column_config={
