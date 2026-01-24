@@ -46,4 +46,35 @@ def get_sp500_tickers():
         df = pd.read_html(StringIO(response.text))[0]
         tickers = df['Symbol'].tolist()
         return [t.replace('.', '-') for t in tickers]
-    except
+    except:
+        return []
+
+@st.cache_data(ttl=3600)
+def get_nasdaq100_tickers():
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        url = "https://en.wikipedia.org/wiki/Nasdaq-100"
+        response = requests.get(url, headers=headers)
+        dfs = pd.read_html(StringIO(response.text))
+        for df in dfs:
+            if 'Ticker' in df.columns:
+                tickers = df['Ticker'].tolist()
+                return [t.replace('.', '-') for t in tickers]
+            elif 'Symbol' in df.columns:
+                tickers = df['Symbol'].tolist()
+                return [t.replace('.', '-') for t in tickers]
+        return []
+    except:
+        return []
+
+def get_combined_tickers(choice, limit):
+    sp500 = []
+    nasdaq = []
+    
+    if "S&P" in choice or "全火力" in choice:
+        sp500 = get_sp500_tickers()
+    
+    if "NASDAQ" in choice or "全火力" in choice:
+        nasdaq = get_nasdaq100_tickers()
+    
+    combined
