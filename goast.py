@@ -5,13 +5,14 @@ import numpy as np
 import requests
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (趨勢防護版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (財報透視版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (趨勢防護版)")
+st.title("👻 幽靈策略掃描器 (財報透視版)")
 st.write("""
-**策略目標**：在 **日線多頭 (季線向上)** 的保護下，尋找 **4小時 U 型起漲點**。
+**策略目標**：尋找 **日線多頭 + 4H U型** 的標的，並直接顯示 **即將財報日** 與 **產業題材**。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -23,10 +24,10 @@ market_choice = st.sidebar.radio(
 )
 scan_limit = st.sidebar.slider("掃描數量 (前 N 大)", 50, 600, 200)
 
-# --- 新增：日線趨勢濾網 (User 指定功能) ---
-st.sidebar.header("🛡️ 日線趨勢濾網 (避免接刀)")
-check_daily_ma60_up = st.sidebar.checkbox("✅ 必須：日線 60MA 向上 (排除空頭)", value=True, help="強制過濾掉日線季線還在下彎的股票，避免買到空頭反彈。")
-check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 必須：股價 > 日線 60MA", value=True, help="確保股價站上季線，屬於多頭格局。")
+# --- 日線趨勢濾網 ---
+st.sidebar.header("🛡️ 日線趨勢濾網")
+check_daily_ma60_up = st.sidebar.checkbox("✅ 必須：日線 60MA 向上", value=True)
+check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 必須：股價 > 日線 60MA", value=True)
 
 st.sidebar.header("⚙️ 基礎篩選")
 hv_threshold = st.sidebar.slider("HV Rank 門檻 (越低越好)", 10, 100, 65)
@@ -121,44 +122,33 @@ def analyze_u_shape(ma_series):
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
-        # 抓取 6 個月數據 (確保日線 MA60 有足夠資料)
+        # 1. 抓取歷史數據
         df_1h = stock.history(period="6mo", interval="1h")
-        
         if len(df_1h) < 240: return None
 
-        # --- A. 日線級別處理 (Daily Analysis) ---
+        # --- A. 日線級別處理 ---
         df_daily_synth = df_1h.resample('D').agg({
             'Volume': 'sum',
             'Close': 'last'
         }).dropna()
         
-        # 1. 計算日線 MA60
         df_daily_synth['MA60'] = df_daily_synth['Close'].rolling(window=60).mean()
         
-        # 檢查資料長度
         if len(df_daily_synth) < 60: return None
         
         daily_ma60_now = df_daily_synth['MA60'].iloc[-1]
         daily_ma60_prev = df_daily_synth['MA60'].iloc[-2]
         current_price_daily = df_daily_synth['Close'].iloc[-1]
 
-        # === 🛡️ 日線趨勢過濾 (關鍵修改) ===
-        
-        # 條件 1: 日線 MA60 必須向上 (斜率 > 0)
-        if check_daily_ma60_up:
-            if daily_ma60_now <= daily_ma60_prev: 
-                return None # 季線還在跌，淘汰
-        
-        # 條件 2: 股價必須在 日線 MA60 之上
-        if check_price_above_daily_ma60:
-            if current_price_daily < daily_ma60_now:
-                return None # 股價在季線下，淘汰
+        # 日線趨勢過濾
+        if check_daily_ma60_up and daily_ma60_now <= daily_ma60_prev: return None
+        if check_price_above_daily_ma60 and current_price_daily < daily_ma60_now: return None
 
-        # 2. 成交量過濾
+        # 成交量過濾
         avg_volume = df_daily_synth['Volume'].rolling(window=20).mean().iloc[-1]
         if avg_volume < vol_threshold: return None
 
-        # 3. HV Rank 過濾
+        # HV Rank 過濾
         close_daily = df_daily_synth['Close']
         log_ret = np.log(close_daily / close_daily.shift(1))
         vol_30d = log_ret.rolling(window=30).std() * np.sqrt(252) * 100
@@ -166,13 +156,12 @@ def get_ghost_metrics(symbol, vol_threshold):
         current_hv = vol_30d.iloc[-1]
         min_hv = vol_30d.min()
         max_hv = vol_30d.max()
-        
         if max_hv == min_hv: return None
         hv_rank = ((current_hv - min_hv) / (max_hv - min_hv)) * 100
         
         if hv_rank > hv_threshold: return None
 
-        # --- B. 4小時級別處理 (4H Analysis) ---
+        # --- B. 4小時級別處理 ---
         df_4h = df_1h.resample('4h').agg({
             'Close': 'last', 
             'Volume': 'sum'
@@ -181,7 +170,6 @@ def get_ghost_metrics(symbol, vol_threshold):
         if len(df_4h) < 60: return None
 
         df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
-        
         ma_segment = df_4h['MA60'].iloc[-u_sensitivity:]
         if ma_segment.isnull().values.any() or len(ma_segment) < u_sensitivity: return None
         
@@ -189,42 +177,61 @@ def get_ghost_metrics(symbol, vol_threshold):
         ma60_now_4h = ma_segment.iloc[-1]
         dist_pct = ((current_price_4h - ma60_now_4h) / ma60_now_4h) * 100
 
-        # 乖離率過濾
         if abs(dist_pct) > dist_threshold: return None 
         
-        # --- C. U 型檢測邏輯 ---
+        # --- C. U 型檢測 ---
         u_score = 0
         curvature = 0
-        status_msg = "符合乖離"
 
         if enable_u_logic:
             is_u_shape, curv = analyze_u_shape(ma_segment)
             if not is_u_shape: return None
             if curv < min_curvature: return None
-            
             curvature = curv
-            status_msg = "✅ 完美微笑"
             u_score = (curvature * 1000) - (abs(dist_pct) * 0.5)
         else:
             u_score = -abs(dist_pct)
-            curvature = 0 
 
         # --- D. 期權檢查 ---
         try:
-            if not stock.options: 
-                return None
+            if not stock.options: return None
         except:
             return None
+
+        # --- 【新增】E. 獲取財報與產業資訊 (取代原本的狀態文字) ---
+        info_str = "N/A"
+        try:
+            # 1. 獲取產業 (Industry) - 作為個股題材
+            # 注意：這會發送額外請求，可能會稍微增加時間
+            info = stock.info
+            industry = info.get('industry', 'Unknown')
+            # 簡化產業名稱 (太長會讓表格很醜)
+            industry_short = industry.split(" - ")[0].split(" ")[0] if industry else "N/A"
+            
+            # 2. 獲取下一次財報日 (Earnings Date)
+            earnings_date_str = "未知"
+            cal = stock.calendar
+            # Yahoo Finance 的 calendar 格式有時是 dict, 有時有變，這邊做個保護
+            if cal and isinstance(cal, dict) and 'Earnings Date' in cal:
+                next_earnings = cal['Earnings Date'][0]
+                earnings_date_str = next_earnings.strftime('%m-%d') # 只顯示 月-日
+            elif cal and isinstance(cal, dict) and 'Earnings High' in cal:
+                 next_earnings = cal['Earnings High'][0]
+                 earnings_date_str = next_earnings.strftime('%m-%d')
+            
+            # 組合字串： "02-15 | Semi"
+            info_str = f"📅 {earnings_date_str} | 🏭 {industry_short}"
+            
+        except:
+            info_str = "數據讀取失敗"
 
         return {
             "代號": symbol,
             "HV Rank": round(hv_rank, 1),
             "現價": round(current_price_4h, 2),
             "4H 60MA": round(ma60_now_4h, 2),
-            "日線 60MA": "⬆️ 翻揚" if daily_ma60_now > daily_ma60_prev else "⬇️ 下彎",
-            "U型強度": round(curvature * 1000, 2),
             "乖離率": f"{round(dist_pct, 2)}%",
-            "狀態": status_msg,
+            "財報/產業": info_str, # 這裡取代了原本的「狀態」
             "_sort_score": u_score,
             "_dist_raw": abs(dist_pct)
         }
@@ -241,12 +248,7 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         target_tickers = get_combined_tickers(market_choice, scan_limit)
         
         status.write(f"🔥 Turbo 模式啟動！ (核心數: {max_workers})")
-        
-        # 顯示過濾條件資訊
-        msg_trend = "已啟用" if check_daily_ma60_up else "未啟用"
-        msg_u = "已啟用" if enable_u_logic else "未啟用"
-        
-        status.write(f"🛡️ 日線趨勢過濾: {msg_trend} | U型過濾: {msg_u}")
+        status.write(f"🔍 目標: {len(target_tickers)} 檔 | 正在抓取財報與產業數據...")
         
         results = []
         completed_count = 0
@@ -278,9 +280,8 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
             "HV Rank": st.column_config.NumberColumn("HV波動", format="%.1f"),
             "現價": st.column_config.NumberColumn(format="$%.2f"),
             "4H 60MA": st.column_config.NumberColumn("4H 季線", format="$%.2f"),
-            "日線 60MA": st.column_config.TextColumn("日線趨勢"),
             "乖離率": st.column_config.TextColumn("距離均線"),
-            "狀態": st.column_config.TextColumn("型態"),
+            "財報/產業": st.column_config.TextColumn("題材與財報 (月-日)", help="📅 下次財報日 | 🏭 產業類別"),
             "_sort_score": None,
             "_dist_raw": None
         }
@@ -300,4 +301,4 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
             use_container_width=True
         )
     else:
-        st.warning("⚠️ 沒掃到符合條件的股票。\n可能原因：\n1. 「日線趨勢」條件太嚴格（現在是修正期？）\n2. 嘗試取消勾選「日線 60MA 向上」看看有無反彈股。")
+        st.warning("⚠️ 沒掃到符合條件的股票。\n建議：\n1. 放寬「HV Rank 門檻」\n2. 嘗試取消勾選「日線 60MA 向上」")
