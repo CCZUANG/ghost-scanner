@@ -66,3 +66,213 @@ def get_nasdaq100_tickers():
         url = "https://en.wikipedia.org/wiki/Nasdaq-100"
         response = requests.get(url, headers=headers)
         dfs = pd.read_html(StringIO(response.text))
+        for df in dfs:
+            if 'Ticker' in df.columns:
+                tickers = df['Ticker'].tolist()
+                return [t.replace('.', '-') for t in tickers]
+            elif 'Symbol' in df.columns:
+                tickers = df['Symbol'].tolist()
+                return [t.replace('.', '-') for t in tickers]
+        return []
+    except:
+        return []
+
+def get_combined_tickers(choice, limit):
+    sp500 = []
+    nasdaq = []
+    
+    if "S&P" in choice or "全火力" in choice:
+        sp500 = get_sp500_tickers()
+    
+    if "NASDAQ" in choice or "全火力" in choice:
+        nasdaq = get_nasdaq100_tickers()
+    
+    combined = list(set(sp500 + nasdaq))
+    
+    if not combined:
+        return ['TSM', 'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'NFLX', 'PLTR', 'LUNR', 'COIN', 'MSTR', 'QQQ', 'SPY']
+    
+    return combined[:limit]
+
+def analyze_u_shape(ma_series):
+    try:
+        y = ma_series.values
+        x = np.arange(len(y))
+        coeffs = np.polyfit(x, y, 2)
+        a, b, c = coeffs
+        
+        if a <= 0: return False, 0
+        
+        vertex_x = -b / (2 * a)
+        len_window = len(y)
+        
+        if not (len_window * 0.3 <= vertex_x <= len_window * 1.1):
+            return False, a
+            
+        current_slope = y[-1] - y[-2]
+        if current_slope <= 0: return False, a
+
+        return True, a
+    except:
+        return False, 0
+
+def get_ghost_metrics(symbol, vol_threshold):
+    try:
+        stock = yf.Ticker(symbol)
+        # 一次抓取數據 (日線計算 HV, 小時線計算 U型)
+        df_1h = stock.history(period="6mo", interval="1h")
+        
+        if len(df_1h) < 240: return None
+
+        # 1. 計算日均量 (從 1h 合成)
+        df_daily_synth = df_1h.resample('D').agg({
+            'Volume': 'sum',
+            'Close': 'last'
+        }).dropna()
+        
+        avg_volume = df_daily_synth['Volume'].rolling(window=20).mean().iloc[-1]
+        if avg_volume < vol_threshold: return None
+
+        # --- 【已修復】計算 HV Rank ---
+        close_daily = df_daily_synth['Close']
+        if len(close_daily) < 30: return None
+        
+        log_ret = np.log(close_daily / close_daily.shift(1))
+        # 年化歷史波動率 (30天)
+        vol_30d = log_ret.rolling(window=30).std() * np.sqrt(252) * 100
+        
+        current_hv = vol_30d.iloc[-1]
+        min_hv = vol_30d.min()
+        max_hv = vol_30d.max()
+        
+        # 避免分母為 0
+        if max_hv == min_hv: return None
+        
+        hv_rank = ((current_hv - min_hv) / (max_hv - min_hv)) * 100
+        
+        # HV 過濾：如果波動太大，直接淘汰
+        if hv_rank > hv_threshold: return None
+
+        # 2. 合成 4H K線 (用於 U 型判斷)
+        df_4h = df_1h.resample('4h').agg({
+            'Close': 'last', 
+            'Volume': 'sum'
+        }).dropna()
+        
+        if len(df_4h) < 60: return None
+
+        df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
+        
+        ma_segment = df_4h['MA60'].iloc[-u_sensitivity:]
+        if ma_segment.isnull().values.any() or len(ma_segment) < u_sensitivity: return None
+        
+        current_price = df_4h['Close'].iloc[-1]
+        ma60_now = ma_segment.iloc[-1]
+        dist_pct = ((current_price - ma60_now) / ma60_now) * 100
+
+        # 乖離率過濾
+        if abs(dist_pct) > dist_threshold: return None 
+        
+        # --- U 型檢測邏輯 ---
+        u_score = 0
+        curvature = 0
+        status_msg = "符合乖離"
+
+        if enable_u_logic:
+            is_u_shape, curv = analyze_u_shape(ma_segment)
+            if not is_u_shape: return None
+            if curv < min_curvature: return None
+            
+            curvature = curv
+            status_msg = "✅ 完美微笑"
+            u_score = (curvature * 1000) - (abs(dist_pct) * 0.5)
+        else:
+            u_score = -abs(dist_pct)
+            curvature = 0 
+
+        # --- 期權存在性檢查 ---
+        try:
+            if not stock.options: 
+                return None
+        except:
+            return None
+
+        return {
+            "代號": symbol,
+            "HV Rank": round(hv_rank, 1), # 顯示 HV Rank
+            "現價": round(current_price, 2),
+            "4H 60MA": round(ma60_now, 2),
+            "U型強度": round(curvature * 1000, 2),
+            "乖離率": f"{round(dist_pct, 2)}%",
+            "狀態": status_msg,
+            "_sort_score": u_score,
+            "_dist_raw": abs(dist_pct)
+        }
+    except:
+        return None
+
+# --- 4. 主程式執行邏輯 ---
+
+if st.button("🚀 啟動 Turbo 掃描", type="primary"):
+    status_text = f"正在下載 {market_choice} 清單..."
+    progress_bar = st.progress(0)
+    
+    with st.status(status_text, expanded=True) as status:
+        target_tickers = get_combined_tickers(market_choice, scan_limit)
+        
+        status.write(f"🔥 Turbo 模式啟動！ (核心數: {max_workers})")
+        status.write(f"🔍 目標: {len(target_tickers)} 檔股票 | 來自: {market_choice}")
+        status.write(f"⚙️ 條件：HV Rank < {hv_threshold} | 日均量 > {min_vol_m}M")
+        
+        results = []
+        completed_count = 0
+        total_count = len(target_tickers)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_ticker = {
+                executor.submit(get_ghost_metrics, t, min_volume_threshold): t 
+                for t in target_tickers
+            }
+            
+            for future in as_completed(future_to_ticker):
+                data = future.result()
+                if data:
+                    results.append(data)
+                
+                completed_count += 1
+                progress_bar.progress(completed_count / total_count)
+            
+        status.update(label=f"掃描完成！共發現 {len(results)} 檔。", state="complete", expanded=False)
+
+    if results:
+        df_results = pd.DataFrame(results)
+        df_results = df_results.sort_values(by="_sort_score", ascending=False)
+        
+        st.success(f"🎯 發現 {len(df_results)} 檔潛力股！")
+        
+        column_config = {
+            "HV Rank": st.column_config.NumberColumn("HV波動 (低=好)", format="%.1f"),
+            "現價": st.column_config.NumberColumn(format="$%.2f"),
+            "4H 60MA": st.column_config.NumberColumn(format="$%.2f"),
+            "乖離率": st.column_config.TextColumn("距離均線"),
+            "狀態": st.column_config.TextColumn("型態"),
+            "_sort_score": None,
+            "_dist_raw": None
+        }
+
+        if enable_u_logic:
+            column_config["U型強度"] = st.column_config.ProgressColumn(
+                "U型分數", 
+                min_value=0, max_value=20, format="%.1f"
+            )
+        else:
+             column_config["U型強度"] = st.column_config.NumberColumn("U型分數 (未啟用)", format="%.1f")
+
+        st.dataframe(
+            df_results,
+            column_config=column_config,
+            hide_index=True,
+            use_container_width=True
+        )
+    else:
+        st.warning("⚠️ 沒掃到符合條件的股票。\n建議：\n1. 放寬「HV Rank 門檻」\n2. 擴大「距離 60MA 範圍」")
