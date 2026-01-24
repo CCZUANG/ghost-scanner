@@ -9,11 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (緊密版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (完美K線版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (緊密版)")
+st.title("👻 幽靈策略掃描器 (完美K線版)")
 st.write("""
-**策略目標**：鎖定 **日線多頭 + 4H U型**，已優化 4H K線顯示，移除休市空檔，讓圖形更緊密連續。
+**策略目標**：鎖定 **日線多頭 + 4H U型**，4H 圖表採用無縫模式，修復線圖斷裂與空隙問題。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -69,7 +69,7 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# --- 改進版繪圖函數 (移除休市空檔) ---
+# --- 改進版繪圖函數 (4H 改用 Category Axis 修復斷裂) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     
@@ -113,11 +113,11 @@ def plot_interactive_chart(symbol):
                 ))
                 fig_w.add_trace(go.Scatter(
                     x=df_w.index, y=df_w['MA20'], mode='lines', name='MA20',
-                    line=dict(color='royalblue', width=1)
+                    line=dict(color='royalblue', width=1), connectgaps=True
                 ))
                 fig_w.add_trace(go.Scatter(
                     x=df_w.index, y=df_w['MA60'], mode='lines', name='MA60',
-                    line=dict(color='orange', width=3)
+                    line=dict(color='orange', width=3), connectgaps=True
                 ))
                 
                 fig_w.update_layout(title=get_title_config(f"{symbol} 周線"), yaxis_title="股價", **layout_common)
@@ -148,16 +148,15 @@ def plot_interactive_chart(symbol):
                 ))
                 fig_d.add_trace(go.Scatter(
                     x=df_d.index, y=df_d['MA20'], mode='lines', name='MA20',
-                    line=dict(color='royalblue', width=1)
+                    line=dict(color='royalblue', width=1), connectgaps=True
                 ))
                 fig_d.add_trace(go.Scatter(
                     x=df_d.index, y=df_d['MA60'], mode='lines', name='MA60',
-                    line=dict(color='orange', width=3)
+                    line=dict(color='orange', width=3), connectgaps=True
                 ))
                 
                 fig_d.update_layout(title=get_title_config(f"{symbol} 日線"), yaxis_title="股價", **layout_common)
                 
-                # 日線移除週末
                 rangebreaks_settings = [dict(bounds=["sat", "mon"])]
                 
                 if len(df_d) > 150:
@@ -171,9 +170,10 @@ def plot_interactive_chart(symbol):
         except Exception as e:
             st.error(f"日線圖錯誤: {e}")
 
-    # --- Tab 3: 4小時圖 (重點修改區) ---
+    # --- Tab 3: 4小時圖 (關鍵修復) ---
     with tab3:
         try:
+            # 1. 載入完整數據
             df_1h = stock.history(period="6mo", interval="1h")
             if len(df_1h) < 100:
                 st.warning("4H 數據不足")
@@ -186,40 +186,43 @@ def plot_interactive_chart(symbol):
                 df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
                 df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
 
+                # 【關鍵修復】將 Index 轉為字串，強制使用 Category Axis
+                # 這會讓 Plotly 把它們當作 "第1根, 第2根..." 來畫，完全忽略時間空隙
+                df_4h['date_str'] = df_4h.index.strftime('%m-%d %H:%M')
+
                 fig_4h = go.Figure()
+                
+                # 使用 date_str 作為 X 軸
                 fig_4h.add_trace(go.Candlestick(
-                    x=df_4h.index, 
+                    x=df_4h['date_str'], 
                     open=df_4h['Open'], high=df_4h['High'],
                     low=df_4h['Low'], close=df_4h['Close'], 
                     name='4H K'
                 ))
                 fig_4h.add_trace(go.Scatter(
-                    x=df_4h.index, y=df_4h['MA20'], 
+                    x=df_4h['date_str'], y=df_4h['MA20'], 
                     mode='lines', name='MA20',
-                    line=dict(color='royalblue', width=1)
+                    line=dict(color='royalblue', width=1),
+                    connectgaps=True # 雙重保險，確保連線
                 ))
                 fig_4h.add_trace(go.Scatter(
-                    x=df_4h.index, y=df_4h['MA60'], 
+                    x=df_4h['date_str'], y=df_4h['MA60'], 
                     mode='lines', name='MA60',
-                    line=dict(color='orange', width=3)
+                    line=dict(color='orange', width=3),
+                    connectgaps=True
                 ))
                 
                 fig_4h.update_layout(title=get_title_config(f"{symbol} 4小時圖"), yaxis_title="股價", **layout_common)
                 
-                # 【關鍵修改】同時隱藏「週末」和「每日休市時段(16:00-09:30)」
-                # 這樣 K 棒就不會因為晚上沒交易而隔很開
-                rangebreaks_settings = [
-                    dict(bounds=["sat", "mon"]),           # 隱藏週末
-                    dict(bounds=[16, 9.5], pattern="hour") # 隱藏美股休市 (16:00 - 9:30)
-                ]
+                # 【視角鎖定】
+                # 因為改用 Category Axis，這裡的 range 要用「數量索引」 (例如從第 500 根到最後一根)
+                total_bars = len(df_4h)
+                zoom_start = max(0, total_bars - 80) # 顯示最後 80 根
+                zoom_end = total_bars
                 
-                if len(df_4h) > 80:
-                    start_view = df_4h.index[-80]
-                    end_view = df_4h.index[-1] + pd.Timedelta(hours=4)
-                    fig_4h.update_xaxes(range=[start_view, end_view], rangebreaks=rangebreaks_settings)
-                else:
-                    fig_4h.update_xaxes(rangebreaks=rangebreaks_settings)
-
+                # type='category' 是關鍵，它會移除所有空隙
+                fig_4h.update_xaxes(type='category', range=[zoom_start, zoom_end])
+                
                 st.plotly_chart(fig_4h, use_container_width=True, config=config_common)
                 
         except Exception as e:
@@ -369,7 +372,7 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"掃描完成！共發現 {len(results)} 檔。", state="complete", expanded=False)
         st.session_state['scan_results'] = results
 
-# --- 5. 顯示結果 ---
+# --- 5. 顯示結果 (上下佈局) ---
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df_results = pd.DataFrame(st.session_state['scan_results'])
@@ -416,4 +419,4 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     if selected_option:
         selected_symbol = selected_option.split(" - ")[0]
         plot_interactive_chart(selected_symbol)
-        st.markdown(f"**操作提示：**\n* 畫面已自動隱藏美股夜間休市時段，讓 K 棒連接更緊密。")
+        st.markdown(f"**操作提示：**\n* 4H 線圖已升級為 **「無縫模式」**，線條保證連續，無虛線斷裂。\n* 預設顯示最後 80 根 K 棒，**往左滑動** 即可查看歷史走勢。")
