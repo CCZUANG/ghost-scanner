@@ -6,14 +6,14 @@ import requests
 import plotly.graph_objects as go
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="幽靈策略掃描器 (寬螢幕版)", page_icon="👻", layout="wide")
+st.set_page_config(page_title="幽靈策略掃描器 (全歷史版)", page_icon="👻", layout="wide")
 
-st.title("👻 幽靈策略掃描器 (寬螢幕版)")
+st.title("👻 幽靈策略掃描器 (全歷史版)")
 st.write("""
-**策略目標**：鎖定 **日線多頭 + 4H U型**，採上下佈局，提供最寬敞的 K 線檢視空間。
+**策略目標**：鎖定 **日線多頭 + 4H U型**，圖表載入完整歷史數據，可自由縮放檢視過去走勢。
 """)
 
 # --- 2. 側邊欄：參數設定區 ---
@@ -69,11 +69,10 @@ def translate_industry(eng_industry):
         if key in target: return value
     return target.title()
 
-# --- 改進版繪圖函數 ---
+# --- 改進版繪圖函數 (全數據 + 視角鎖定) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     
-    # 分頁順序：周 -> 日 -> 4H
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線 (Long)", "📅 日線 (Mid)", "⏱️ 4H (Short)"])
     
     # 共用佈局
@@ -84,44 +83,54 @@ def plot_interactive_chart(symbol):
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.12,            # 移到下方
+            y=-0.12,
             xanchor="center",
             x=0.5
         ),
-        dragmode=False, # 防手滑
+        # 【修改】改回 'pan' (平移)，這樣手指拖動可以看到前面的 K 棒
+        # 如果設為 False，就完全動不了，沒辦法看歷史數據
+        dragmode='pan', 
     )
 
     def get_title_config(text):
         return dict(text=text, x=0.02, xanchor='left', font=dict(size=16))
 
-    config_common = {'scrollZoom': False, 'displayModeBar': True, 'displaylogo': False}
+    config_common = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
     # --- Tab 1: 周線圖 ---
     with tab1:
         try:
+            # 載入完整 5 年數據
             df_w = stock.history(period="5y", interval="1wk")
             if len(df_w) < 60:
                 st.warning("周線數據不足")
             else:
                 df_w['MA20'] = df_w['Close'].rolling(window=20).mean()
                 df_w['MA60'] = df_w['Close'].rolling(window=60).mean()
-                df_w_view = df_w.iloc[-100:]
 
                 fig_w = go.Figure()
                 fig_w.add_trace(go.Candlestick(
-                    x=df_w_view.index, open=df_w_view['Open'], high=df_w_view['High'],
-                    low=df_w_view['Low'], close=df_w_view['Close'], name='周K'
+                    x=df_w.index, open=df_w['Open'], high=df_w['High'],
+                    low=df_w['Low'], close=df_w['Close'], name='周K'
                 ))
                 fig_w.add_trace(go.Scatter(
-                    x=df_w_view.index, y=df_w_view['MA20'], mode='lines', name='MA20',
+                    x=df_w.index, y=df_w['MA20'], mode='lines', name='MA20',
                     line=dict(color='royalblue', width=1)
                 ))
                 fig_w.add_trace(go.Scatter(
-                    x=df_w_view.index, y=df_w_view['MA60'], mode='lines', name='MA60',
+                    x=df_w.index, y=df_w['MA60'], mode='lines', name='MA60',
                     line=dict(color='orange', width=3)
                 ))
                 
                 fig_w.update_layout(title=get_title_config(f"{symbol} 周線"), yaxis_title="股價", **layout_common)
+                
+                # 【關鍵修改】設定預設顯示範圍 (Range)，但不刪除數據
+                # 預設顯示最後 100 週
+                if len(df_w) > 100:
+                    start_view = df_w.index[-100]
+                    end_view = df_w.index[-1] + pd.Timedelta(weeks=1) # 多留一點右邊空白
+                    fig_w.update_xaxes(range=[start_view, end_view])
+                
                 st.plotly_chart(fig_w, use_container_width=True, config=config_common)
         except Exception as e:
             st.error(f"周線圖錯誤: {e}")
@@ -129,30 +138,38 @@ def plot_interactive_chart(symbol):
     # --- Tab 2: 日線圖 ---
     with tab2:
         try:
-            df_d = stock.history(period="1y")
+            # 載入完整 2 年數據
+            df_d = stock.history(period="2y")
             if len(df_d) < 60:
                 st.warning("日線數據不足")
             else:
                 df_d['MA20'] = df_d['Close'].rolling(window=20).mean()
                 df_d['MA60'] = df_d['Close'].rolling(window=60).mean()
-                df_d_view = df_d.iloc[-150:] 
 
                 fig_d = go.Figure()
                 fig_d.add_trace(go.Candlestick(
-                    x=df_d_view.index, open=df_d_view['Open'], high=df_d_view['High'],
-                    low=df_d_view['Low'], close=df_d_view['Close'], name='日K'
+                    x=df_d.index, open=df_d['Open'], high=df_d['High'],
+                    low=df_d['Low'], close=df_d['Close'], name='日K'
                 ))
                 fig_d.add_trace(go.Scatter(
-                    x=df_d_view.index, y=df_d_view['MA20'], mode='lines', name='MA20',
+                    x=df_d.index, y=df_d['MA20'], mode='lines', name='MA20',
                     line=dict(color='royalblue', width=1)
                 ))
                 fig_d.add_trace(go.Scatter(
-                    x=df_d_view.index, y=df_d_view['MA60'], mode='lines', name='MA60',
+                    x=df_d.index, y=df_d['MA60'], mode='lines', name='MA60',
                     line=dict(color='orange', width=3)
                 ))
                 
                 fig_d.update_layout(title=get_title_config(f"{symbol} 日線"), yaxis_title="股價", **layout_common)
-                fig_d.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                
+                # 【關鍵修改】預設顯示最後 150 天
+                if len(df_d) > 150:
+                    start_view = df_d.index[-150]
+                    end_view = df_d.index[-1] + pd.Timedelta(days=2)
+                    fig_d.update_xaxes(range=[start_view, end_view], rangebreaks=[dict(bounds=["sat", "mon"])])
+                else:
+                    fig_d.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+
                 st.plotly_chart(fig_d, use_container_width=True, config=config_common)
         except Exception as e:
             st.error(f"日線圖錯誤: {e}")
@@ -160,6 +177,7 @@ def plot_interactive_chart(symbol):
     # --- Tab 3: 4小時圖 ---
     with tab3:
         try:
+            # 載入完整 6 個月數據 (約 600-700 根)
             df_1h = stock.history(period="6mo", interval="1h")
             if len(df_1h) < 100:
                 st.warning("4H 數據不足")
@@ -171,23 +189,35 @@ def plot_interactive_chart(symbol):
 
                 df_4h['MA20'] = df_4h['Close'].rolling(window=20).mean()
                 df_4h['MA60'] = df_4h['Close'].rolling(window=60).mean()
-                df_4h_view = df_4h.iloc[-80:] 
 
                 fig_4h = go.Figure()
                 fig_4h.add_trace(go.Candlestick(
-                    x=df_4h_view.index, 
-                    open=df_4h_view['Open'], high=df_4h_view['High'],
-                    low=df_4h_view['Low'], close=df_4h_view['Close'], 
+                    x=df_4h.index, 
+                    open=df_4h['Open'], high=df_4h['High'],
+                    low=df_4h['Low'], close=df_4h['Close'], 
                     name='4H K'
                 ))
                 fig_4h.add_trace(go.Scatter(
-                    x=df_4h_view.index, y=df_4h_view['MA60'], 
+                    x=df_4h.index, y=df_4h['MA20'], 
+                    mode='lines', name='MA20',
+                    line=dict(color='royalblue', width=1)
+                ))
+                fig_4h.add_trace(go.Scatter(
+                    x=df_4h.index, y=df_4h['MA60'], 
                     mode='lines', name='MA60',
                     line=dict(color='orange', width=3)
                 ))
                 
                 fig_4h.update_layout(title=get_title_config(f"{symbol} 4小時圖"), yaxis_title="股價", **layout_common)
-                fig_4h.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                
+                # 【關鍵修改】預設顯示最後 80 根，但保留前面所有的資料
+                if len(df_4h) > 80:
+                    start_view = df_4h.index[-80]
+                    end_view = df_4h.index[-1] + pd.Timedelta(hours=4)
+                    fig_4h.update_xaxes(range=[start_view, end_view], rangebreaks=[dict(bounds=["sat", "mon"])])
+                else:
+                    fig_4h.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+
                 st.plotly_chart(fig_4h, use_container_width=True, config=config_common)
                 
         except Exception as e:
@@ -345,7 +375,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     
     st.success(f"🎯 發現 {len(df_results)} 檔優質標的！")
 
-    # --- A. 上方：結果列表 (Full Width) ---
     st.subheader("📋 掃描結果列表")
     column_config = {
         "代號": st.column_config.LinkColumn(
@@ -374,17 +403,15 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         use_container_width=True
     )
 
-    st.markdown("---") # 分隔線
+    st.markdown("---") 
 
-    # --- B. 下方：K線檢視器 (Full Width) ---
-    st.subheader("🕯️ K線檢視器 (防誤觸)")
+    st.subheader("🕯️ K線檢視器")
     st.info("👇 選擇股票後，可點選分頁切換時框")
     
     select_options = df_results.apply(lambda x: f"{x['代號'].split('/')[-1]} - {x['產業']}", axis=1).tolist()
-    # 將 selectbox 放在這裡，選完直接在下方出圖
     selected_option = st.selectbox("選擇股票:", select_options)
     
     if selected_option:
         selected_symbol = selected_option.split(" - ")[0]
         plot_interactive_chart(selected_symbol)
-        st.markdown(f"**提示：** 圖表已鎖定縮放。如需放大，請點擊圖表右上角工具列。")
+        st.markdown(f"**操作提示：**\n* 畫面已載入歷史數據，請使用 **「平移 (Pan)」** 或 **「縮小 (Zoom Out)」** 來查看更多 K 棒。\n* 手指在圖表上拖曳可移動時間軸。")
