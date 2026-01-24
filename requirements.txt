@@ -3,6 +3,5 @@ yfinance
 pandas
 numpy
 requests
+plotly
 lxml
-html5lib
-beautifulsoup4
