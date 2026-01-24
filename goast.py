@@ -233,4 +233,127 @@ def get_ghost_metrics(symbol, vol_threshold):
             is_u_shape, curv = analyze_u_shape(ma_segment)
             if not is_u_shape: return None
             if curv < min_curvature: return None
-            curvature =
+            curvature = curv
+            u_score = (curvature * 1000) - (abs(dist_pct) * 0.5)
+        else:
+            u_score = -abs(dist_pct)
+
+        # --- D. 期權檢查 ---
+        try:
+            if not stock.options: return None
+        except:
+            return None
+
+        # --- E. 資訊豐富化 (產業中文 + 題材搜尋連結) ---
+        industry_tw = "未知"
+        earnings_date_str = "未知"
+
+        try:
+            # 1. 產業資訊
+            info = stock.info
+            raw_industry = info.get('industry', info.get('sector', 'N/A'))
+            industry_tw = translate_industry(raw_industry)
+            
+            # 2. 財報日期
+            cal = stock.calendar
+            if cal and isinstance(cal, dict) and 'Earnings Date' in cal:
+                earnings_date_str = cal['Earnings Date'][0].strftime('%m-%d')
+            elif cal and isinstance(cal, dict) and 'Earnings High' in cal:
+                 earnings_date_str = cal['Earnings High'][0].strftime('%m-%d')
+            
+        except:
+            pass
+        
+        # 3. 生成 Google 搜尋連結 (題材與注意事項)
+        # 關鍵字：股票代號 + 美股 + 題材 + 分析 + 風險
+        search_query = f"{symbol}+美股+題材+風險+分析"
+        search_url = f"https://www.google.com/search?q={search_query}"
+
+        return {
+            "代號": symbol,
+            "HV Rank": round(hv_rank, 1),
+            "現價": round(current_price_4h, 2),
+            "4H 60MA": round(ma60_now_4h, 2),
+            "乖離率": f"{round(dist_pct, 2)}%",
+            "產業": industry_tw,
+            "財報日": earnings_date_str,
+            "題材搜尋": search_url, # 這是連結
+            "_sort_score": u_score,
+            "_dist_raw": abs(dist_pct)
+        }
+    except:
+        return None
+
+# --- 4. 主程式執行邏輯 ---
+
+if st.button("🚀 啟動 Turbo 掃描", type="primary"):
+    status_text = f"正在下載 {market_choice} 清單..."
+    progress_bar = st.progress(0)
+    
+    with st.status(status_text, expanded=True) as status:
+        target_tickers = get_combined_tickers(market_choice, scan_limit)
+        
+        status.write(f"🔥 Turbo 模式啟動！ (核心數: {max_workers})")
+        status.write(f"🔍 目標: {len(target_tickers)} 檔 | 正在分析...")
+        
+        results = []
+        completed_count = 0
+        total_count = len(target_tickers)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_ticker = {
+                executor.submit(get_ghost_metrics, t, min_volume_threshold): t 
+                for t in target_tickers
+            }
+            
+            for future in as_completed(future_to_ticker):
+                data = future.result()
+                if data:
+                    results.append(data)
+                
+                completed_count += 1
+                progress_bar.progress(completed_count / total_count)
+            
+        status.update(label=f"掃描完成！共發現 {len(results)} 檔。", state="complete", expanded=False)
+
+    if results:
+        df_results = pd.DataFrame(results)
+        
+        # HV Rank 由低到高排序
+        df_results = df_results.sort_values(by="HV Rank", ascending=True)
+        
+        st.success(f"🎯 發現 {len(df_results)} 檔優質標的！")
+        
+        column_config = {
+            "HV Rank": st.column_config.NumberColumn("HV波動 (低優先)", format="%.1f"),
+            "現價": st.column_config.NumberColumn(format="$%.2f"),
+            "4H 60MA": st.column_config.NumberColumn("4H 季線", format="$%.2f"),
+            "乖離率": st.column_config.TextColumn("距離均線"),
+            "產業": st.column_config.TextColumn("產業 (中文)"),
+            "財報日": st.column_config.TextColumn("下季財報"),
+            # 【新功能】這裡會顯示一個連結按鈕
+            "題材搜尋": st.column_config.LinkColumn(
+                "題材與風險", 
+                display_text="🔍 點擊查詢", # 按鈕上顯示的文字
+                help="點擊後將跳轉至 Google 搜尋該股票的最新分析與題材"
+            ),
+            "_sort_score": None,
+            "_dist_raw": None
+        }
+
+        if enable_u_logic:
+            column_config["U型強度"] = st.column_config.ProgressColumn(
+                "U型分數", 
+                min_value=0, max_value=20, format="%.1f"
+            )
+        else:
+             column_config["U型強度"] = st.column_config.NumberColumn("U型分數 (未啟用)", format="%.1f")
+
+        st.dataframe(
+            df_results,
+            column_config=column_config,
+            hide_index=True,
+            use_container_width=True
+        )
+    else:
+        st.warning("⚠️ 沒掃到符合條件的股票。\n建議：\n1. 放寬「HV Rank 門檻」\n2. 嘗試取消勾選「日線 60MA 向上」")
