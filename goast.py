@@ -45,8 +45,7 @@ def handle_u_logic_toggle():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (Step 1-3 詳細準則 - 修改版) ---
-# 【修改說明】依照要求將標題與內文分行顯示，提升閱讀體驗
+# --- 2. 核心策略導引區 (Step 1-3 詳細準則 - 排版優化版) ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
     
@@ -109,10 +108,23 @@ market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全�
 st.sidebar.header("📈 戰法連動")
 enable_u_logic = st.sidebar.checkbox("✅ 啟動 4小時 U型戰法連動", value=False, key='u_logic_key', on_change=handle_u_logic_toggle)
 
-# 嚴格勺子模式開關
+# --- 【修改處】嚴格勺子模式與範圍設定 ---
 enable_spoon_strict = False
+spoon_vertex_range = (50, 95) # 預設值
+
 if enable_u_logic:
     enable_spoon_strict = st.sidebar.checkbox("🥄 嚴格勺子模式 (尋找剛翻揚)", value=True, help="強制要求 MA60 的最低點發生在近期，排除已經漲很多的股票。")
+    
+    if enable_spoon_strict:
+        # 新增 Range Slider
+        spoon_vertex_range = st.sidebar.slider(
+            "🥄 勺子底部發生位置 (%)",
+            min_value=0, 
+            max_value=100, 
+            value=(50, 95), 
+            step=5,
+            help="設定拋物線最低點(Vertex)必須落在回測期間的哪個百分比區段。\n例如 (50, 100) 代表最低點必須發生在最近一半的時間內，確保是「剛翻揚」。"
+        )
 
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
@@ -150,11 +162,10 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 (手機優化 + 長歷史) ---
+# --- 5. 核心繪圖函數 ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
-    # 手機優化：dragmode=False
     layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"), dragmode=False)
     config = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
@@ -233,9 +244,15 @@ def get_ghost_metrics(symbol, vol_threshold):
             
             if a <= 0: return None # 開口必須向上
             
-            # 嚴格勺子邏輯
+            # --- 【修改處】嚴格勺子邏輯 (動態參數化) ---
             if enable_spoon_strict:
-                if not (len(y) * 0.5 <= vertex_x <= len(y) * 0.95): return None
+                # 將百分比 (0-100) 轉為小數 (0.0-1.0)
+                min_pos_pct = spoon_vertex_range[0] / 100.0
+                max_pos_pct = spoon_vertex_range[1] / 100.0
+                
+                # 檢查頂點是否落在指定的區間內
+                if not (len(y) * min_pos_pct <= vertex_x <= len(y) * max_pos_pct): return None
+                
                 if y[-1] <= y[-2]: return None
                 if y[0] < y[-1]: return None 
                 u_score = 1000
