@@ -45,36 +45,57 @@ def handle_u_logic_toggle():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (Step 1-3 詳細準則 - 完整保留) ---
-# 【重要】此處文字已鎖定，不做簡化
+# --- 2. 核心策略導引區 (Step 1-3 詳細準則 - 修改版) ---
+# 【修改說明】依照要求將標題與內文分行顯示，提升閱讀體驗
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
     
     with col_step1:
         st.markdown("### 第一步：建立試探部位 (Rule 1)")
         st.markdown("""
-        **🚀 啟動時機**：放量突破關鍵壓力或回測支撐成功時。  
-        **動作**：買進 低價位 Call + 賣出 高一階 Call (**多頭價差**)。  
-        **成功指標**：股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。  
-        **❌ 失敗判定**：2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
+        **🚀 啟動時機**
+        放量突破關鍵壓力或回測支撐成功時。
+
+        **動作**
+        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
+
+        **成功指標**
+        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
+
+        **❌ 失敗判定**
+        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
         """)
         
     with col_step2:
         st.markdown("### 第二步：動能加碼 (Rule 2)")
         st.markdown("""
-        **🚀 啟動時機**：當價差已產生「浮盈」，且股價衝向賣出價位時。  
-        **動作**：加買 **更高一階的 Call**。  
-        **成功指標**：IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。  
-        **❌ 失敗判定**：動能衰竭或 IV 下降（冰塊融化）。
+        **🚀 啟動時機**
+        當價差已產生「浮盈」，且股價衝向賣出價位時。
+
+        **動作**
+        加買 **更高一階的 Call**。
+
+        **成功指標**
+        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
+
+        **❌ 失敗判定**
+        動能衰竭或 IV 下降（冰塊融化）。
         """)
         
     with col_step3:
         st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
         st.markdown("""
-        **🚀 啟動時機**：股價強勢漲破加碼價，且市場出現過熱訊號時。  
-        **動作**：**再加賣一張中間價位的 Call** (總計賣出兩張)。  
-        **成功指標**：型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。  
-        **❌ 失敗判定**：爆量不漲或價格遠超最高階。
+        **🚀 啟動時機**
+        股價強勢漲破加碼價，且市場出現過熱訊號時。
+
+        **動作**
+        **再加賣一張中間價位的 Call** (總計賣出兩張)。
+
+        **成功指標**
+        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
+
+        **❌ 失敗判定**
+        爆量不漲或價格遠超最高階。
         """)
 
     st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
@@ -280,7 +301,7 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"掃描完成！共發現 {len(results)} 檔標的。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank", ascending=True)
+    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False if enable_u_logic else True)
     st.subheader("📋 幽靈策略篩選列表")
     st.dataframe(df, column_config={
         "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*)"),
