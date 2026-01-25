@@ -332,17 +332,18 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     # 原始資料 (用於邏輯運算與圖表)
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False if enable_u_logic else True)
     
-    # 【修改處 1】建立一個專門用於顯示的 DataFrame，將代號轉換為 Yahoo Financials 連結
+    # 【修改處 1】建立一個專門用於顯示的 DataFrame，將代號轉換為 Yahoo Finance Statistics 連結
     df_display = df.copy()
-    df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/financials")
+    # 連結改為 key-statistics
+    df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
 
     st.subheader("📋 幽靈策略篩選列表")
     
-    # 【修改處 2】使用 LinkColumn 配合 Regex，讓表格顯示代號但連結到財報
+    # 【修改處 2】更新正則表達式以匹配 key-statistics
     st.dataframe(df_display, column_config={
         "代號": st.column_config.LinkColumn(
             "代號", 
-            display_text="https://finance\\.yahoo\\.com/quote/(.*?)/financials"  # 正則表達式：只顯示代號，隱藏網址
+            display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"  # 修改這裡以匹配新的網址格式
         ),
         "題材搜尋": st.column_config.LinkColumn("題材與風險", display_text="🔍 查詢"),
         "_sort_score": None
@@ -352,6 +353,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     st.info("💡 手機操作提示：圖表預設為鎖定狀態以利網頁捲動。如需平移或縮放 K 線，請點擊圖表右上角工具列的「十字箭頭 (Pan)」圖示解鎖。")
     st.subheader("🕯️ 三週期 K 線檢視")
     
-    # 【修改處 3】下拉選單使用原始 df，確保抓取的是純代號 (如 NVDA) 而不是網址，避免繪圖錯誤
+    # 下拉選單使用原始 df，確保抓取的是純代號 (如 NVDA) 而不是網址
     selected = st.selectbox("選擇標的:", df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist())
     if selected: plot_interactive_chart(selected.split(" - ")[0])
