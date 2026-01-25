@@ -31,7 +31,7 @@ def handle_u_logic_toggle():
             'dist_threshold': st.session_state.dist_threshold,
             'u_sensitivity': st.session_state.u_sensitivity
         })
-        # 為了抓勺子，靈敏度設為 50 (約8-10天) 效果最好
+        # 為了抓勺子，靈敏度設為 50 效果最好
         st.session_state.scan_limit = 600
         st.session_state.min_vol_m = 1
         st.session_state.dist_threshold = 50.0
@@ -45,21 +45,39 @@ def handle_u_logic_toggle():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 ---
-with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟", expanded=False):
+# --- 2. 核心策略導引區 (Step 1-3 詳細準則 - 完整保留) ---
+# 【重要】此處文字已鎖定，不做簡化
+with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
+    
     with col_step1:
-        st.markdown("### Step 1：建立試探 (Rule 1)")
-        st.markdown("**動作**：買進 Low Call + 賣出 High Call (**多頭價差**)。")
-        st.markdown("**時機**：放量突破關鍵壓力或回測支撐成功時。")
+        st.markdown("### 第一步：建立試探部位 (Rule 1)")
+        st.markdown("""
+        **🚀 啟動時機**：放量突破關鍵壓力或回測支撐成功時。  
+        **動作**：買進 低價位 Call + 賣出 高一階 Call (**多頭價差**)。  
+        **成功指標**：股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。  
+        **❌ 失敗判定**：2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
+        """)
+        
     with col_step2:
-        st.markdown("### Step 2：動能加碼 (Rule 2)")
-        st.markdown("**動作**：加買 **更高一階的 Call**。")
-        st.markdown("**核心**：IV 顯著擴張（水結成冰）。")
+        st.markdown("### 第二步：動能加碼 (Rule 2)")
+        st.markdown("""
+        **🚀 啟動時機**：當價差已產生「浮盈」，且股價衝向賣出價位時。  
+        **動作**：加買 **更高一階的 Call**。  
+        **成功指標**：IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。  
+        **❌ 失敗判定**：動能衰竭或 IV 下降（冰塊融化）。
+        """)
+        
     with col_step3:
-        st.markdown("### Step 3：轉化蝴蝶")
-        st.markdown("**動作**：**再加賣一張中間價位 Call**，達成負成本。")
-    st.info("💡 **勺子型態提示**：啟用「嚴格勺子模式」可捕捉 MA60 剛由下轉上的黃金時刻。")
+        st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
+        st.markdown("""
+        **🚀 啟動時機**：股價強勢漲破加碼價，且市場出現過熱訊號時。  
+        **動作**：**再加賣一張中間價位的 Call** (總計賣出兩張)。  
+        **成功指標**：型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。  
+        **❌ 失敗判定**：爆量不漲或價格遠超最高階。
+        """)
+
+    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
 
 st.markdown("---")
 
@@ -70,7 +88,7 @@ market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全�
 st.sidebar.header("📈 戰法連動")
 enable_u_logic = st.sidebar.checkbox("✅ 啟動 4小時 U型戰法連動", value=False, key='u_logic_key', on_change=handle_u_logic_toggle)
 
-# 【新增】嚴格勺子模式開關
+# 嚴格勺子模式開關
 enable_spoon_strict = False
 if enable_u_logic:
     enable_spoon_strict = st.sidebar.checkbox("🥄 嚴格勺子模式 (尋找剛翻揚)", value=True, help="強制要求 MA60 的最低點發生在近期，排除已經漲很多的股票。")
@@ -93,7 +111,7 @@ else:
     u_sensitivity, min_curvature = 30, 0.003
 max_workers = st.sidebar.slider("🚀 平行核心數", 1, 32, 16)
 
-# --- 4. 產業翻譯與工具 ---
+# --- 4. 產業翻譯 ---
 INDUSTRY_MAP = {
     "technology": "科技", "software": "軟體服務", "semiconductors": "半導體",
     "financial": "金融銀行", "healthcare": "醫療保健", "biotechnology": "生物科技",
@@ -111,10 +129,11 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 (dragmode=False) ---
+# --- 5. 核心繪圖函數 (手機優化 + 長歷史) ---
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
+    # 手機優化：dragmode=False
     layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"), dragmode=False)
     config = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
 
@@ -157,7 +176,7 @@ def plot_interactive_chart(symbol):
             else: st.warning("4H 無數據")
         except Exception as e: st.error(f"4H 圖錯誤: {e}")
 
-# --- 6. 核心指標運算 (【強化】勺子演算法) ---
+# --- 6. 核心指標運算 (含勺子邏輯) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol); df_1h = stock.history(period="1y", interval="1h")
@@ -185,34 +204,21 @@ def get_ghost_metrics(symbol, vol_threshold):
         
         u_score = -abs(dist_pct)
         if enable_u_logic:
-            # 取得均線片段
             y = df_4h['MA60'].tail(u_sensitivity).values
             x = np.arange(len(y))
-            coeffs = np.polyfit(x, y, 2) # 擬合拋物線 ax^2 + bx + c
+            coeffs = np.polyfit(x, y, 2)
             a, b, c = coeffs
-            
-            # 頂點 x 座標 (最低點位置)
             vertex_x = -b / (2 * a)
             
-            # 基礎 U 型檢查
             if a <= 0: return None # 開口必須向上
             
-            # 【關鍵】嚴格勺子邏輯 (Strict Scoop Mode)
+            # 嚴格勺子邏輯
             if enable_spoon_strict:
-                # 條件 1: 最低點必須在區間的「後半段」(50% ~ 90% 處)
-                # 這代表最近才剛跌完，且剛開始勾起來 (不是已經漲飛天，也不是還在跌)
                 if not (len(y) * 0.5 <= vertex_x <= len(y) * 0.95): return None
-                
-                # 條件 2: 目前的斜率必須是正的 (確保正在漲)
                 if y[-1] <= y[-2]: return None
-                
-                # 條件 3: 左側要比右側高 (確認是下跌後的反轉，不是橫盤)
                 if y[0] < y[-1]: return None 
-                
-                # 給予高分
                 u_score = 1000
             else:
-                # 寬鬆模式 (只要是 U 型就好)
                 if not (len(y) * 0.3 <= vertex_x <= len(y) * 1.1): return None
                 if y[-1] <= y[-2]: return None
                 u_score = (a * 1000) - (abs(dist_pct) * 0.5)
@@ -281,8 +287,9 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         "題材搜尋": st.column_config.LinkColumn("題材與風險", display_text="🔍 查詢"),
         "_sort_score": None
     }, hide_index=True, use_container_width=True)
+    
     st.markdown("---")
-    st.info("💡 手機操作提示：圖表預設為鎖定狀態。點擊圖表右上角工具列的「十字箭頭 (Pan)」圖示即可解鎖滑動。")
+    st.info("💡 手機操作提示：圖表預設為鎖定狀態以利網頁捲動。如需平移或縮放 K 線，請點擊圖表右上角工具列的「十字箭頭 (Pan)」圖示解鎖。")
     st.subheader("🕯️ 三週期 K 線檢視")
     selected = st.selectbox("選擇標的:", df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist())
     if selected: plot_interactive_chart(selected.split(" - ")[0])
