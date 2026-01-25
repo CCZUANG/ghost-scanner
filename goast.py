@@ -31,16 +31,21 @@ def handle_u_logic_toggle():
             'dist_threshold': st.session_state.dist_threshold,
             'u_sensitivity': st.session_state.u_sensitivity
         })
-        # 為了抓勺子，靈敏度設為 50 效果最好
+        # 【修改】啟動 U 型戰法時，因預設開啟嚴格勺子，直接將敏感度拉到最大 (240)
         st.session_state.scan_limit = 600
         st.session_state.min_vol_m = 1
         st.session_state.dist_threshold = 50.0
-        st.session_state.u_sensitivity = 50 
+        st.session_state.u_sensitivity = 240 
     else:
         st.session_state.scan_limit = st.session_state.backup['scan_limit']
         st.session_state.min_vol_m = st.session_state.backup['min_vol_m']
         st.session_state.dist_threshold = st.session_state.backup['dist_threshold']
         st.session_state.u_sensitivity = st.session_state.backup['u_sensitivity']
+
+def handle_spoon_toggle():
+    """【新增】勺子模式獨立連動：當手動勾選嚴格勺子時，也將敏感度設為最大"""
+    if st.session_state.spoon_strict_key:
+        st.session_state.u_sensitivity = 240
 
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
@@ -108,22 +113,28 @@ market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全�
 st.sidebar.header("📈 戰法連動")
 enable_u_logic = st.sidebar.checkbox("✅ 啟動 4小時 U型戰法連動", value=False, key='u_logic_key', on_change=handle_u_logic_toggle)
 
-# --- 【修改處】嚴格勺子模式與範圍設定 ---
+# --- 嚴格勺子模式與範圍設定 ---
 enable_spoon_strict = False
 spoon_vertex_range = (50, 95) # 預設值
 
 if enable_u_logic:
-    enable_spoon_strict = st.sidebar.checkbox("🥄 嚴格勺子模式 (尋找剛翻揚)", value=True, help="強制要求 MA60 的最低點發生在近期，排除已經漲很多的股票。")
+    # 【修改】加入 key='spoon_strict_key' 與 on_change=handle_spoon_toggle
+    enable_spoon_strict = st.sidebar.checkbox(
+        "🥄 嚴格勺子模式 (尋找剛翻揚)", 
+        value=True, 
+        key='spoon_strict_key',
+        on_change=handle_spoon_toggle,
+        help="強制要求 MA60 的最低點發生在近期，排除已經漲很多的股票。"
+    )
     
     if enable_spoon_strict:
-        # 新增 Range Slider
         spoon_vertex_range = st.sidebar.slider(
             "🥄 勺子底部發生位置 (%)",
             min_value=0, 
             max_value=100, 
             value=(50, 95), 
             step=5,
-            help="設定拋物線最低點(Vertex)必須落在回測期間的哪個百分比區段。\n例如 (50, 100) 代表最低點必須發生在最近一半的時間內，確保是「剛翻揚」。"
+            help="設定拋物線最低點(Vertex)必須落在回測期間的哪個百分比區段。"
         )
 
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
@@ -138,7 +149,8 @@ min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vo
 dist_threshold = st.sidebar.slider("距離 MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
 
 if enable_u_logic:
-    u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 120, key='u_sensitivity')
+    # 【修改】最大值調整為 240
+    u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 240, key='u_sensitivity')
     min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
 else:
     u_sensitivity, min_curvature = 30, 0.003
@@ -244,13 +256,12 @@ def get_ghost_metrics(symbol, vol_threshold):
             
             if a <= 0: return None # 開口必須向上
             
-            # --- 【修改處】嚴格勺子邏輯 (動態參數化) ---
+            # --- 嚴格勺子邏輯 (動態參數化) ---
             if enable_spoon_strict:
                 # 將百分比 (0-100) 轉為小數 (0.0-1.0)
                 min_pos_pct = spoon_vertex_range[0] / 100.0
                 max_pos_pct = spoon_vertex_range[1] / 100.0
                 
-                # 檢查頂點是否落在指定的區間內
                 if not (len(y) * min_pos_pct <= vertex_x <= len(y) * max_pos_pct): return None
                 
                 if y[-1] <= y[-2]: return None
