@@ -140,7 +140,7 @@ enable_box_breakout = st.sidebar.checkbox(
 if enable_box_breakout:
     st.sidebar.warning("⚠️ 霸道模式已啟動：下方其他濾網已暫時失效。")
     
-    # 【新增】全自動 VCP 偵測
+    # 全自動 VCP 偵測
     enable_full_auto_vcp = st.sidebar.checkbox(
         "🤯 全自動 VCP 偵測 (免設定週數)",
         value=True,
@@ -156,8 +156,8 @@ if enable_box_breakout:
             box_tightness = 100 # 自動旗型下，寬度由邏輯控制
     else:
         st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期")
-        box_weeks = 52 # 預設給最大，邏輯內部會動態調整
-        auto_flag_mode = True # 全自動模式隱含旗型偵測
+        box_weeks = 52 
+        auto_flag_mode = True 
         box_tightness = 100
 else:
     enable_full_auto_vcp = False
@@ -234,7 +234,6 @@ def plot_interactive_chart(symbol):
                 if enable_box_breakout:
                     # 嘗試從 session_state 獲取該股票的偵測週數，若無則用預設
                     detected_weeks = box_weeks
-                    # (這裡為了簡化，繪圖時統一畫出最近的 box_weeks，即便自動偵測可能是別的週數)
                     
                     last_n = df.iloc[-(detected_weeks+1):-1]
                     if len(last_n) > 0:
@@ -275,7 +274,7 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (數據源修復+雙重突破+期權OI+全自動VCP) ---
+# --- 6. 核心指標運算 (數據源修復+雙重突破+期權OI+全自動VCP+趨勢位置防呆) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
@@ -303,18 +302,16 @@ def get_ghost_metrics(symbol, vol_threshold):
                 'Volume': 'sum'
             }).dropna()
             
-            # 若資料不足基本長度
             if len(df_wk) < 15: return None
             
             avg_vol = df_wk['Volume'].tail(10).mean()
             if avg_vol < vol_threshold * 2: return None 
             
             # --- 全自動 VCP 偵測核心 ---
-            # 定義要掃描的候選週期 (優先找長天期)
             if enable_full_auto_vcp:
                 candidate_periods = [52, 40, 30, 20, 12]
             else:
-                candidate_periods = [box_weeks] # 只檢查使用者設定的單一週期
+                candidate_periods = [box_weeks] 
             
             found_vcp = False
             final_box_weeks = 0
@@ -326,7 +323,6 @@ def get_ghost_metrics(symbol, vol_threshold):
             for p in candidate_periods:
                 if len(df_wk) < p + 2: continue
                 
-                # 定義區間
                 box_start_idx = -(p + 1)
                 box_data = df_wk.iloc[box_start_idx:-1]
                 
@@ -349,14 +345,19 @@ def get_ghost_metrics(symbol, vol_threshold):
                     # 嚴格收斂條件：近期波動 < 前期波動 * 0.85
                     if range_recent > range_old * 0.85: continue 
                     
-                    # 檢查是否突破
-                    if current_week['Close'] < box_high * 0.99: continue
+                    # 【關鍵修正】位置檢查 (Position Filter)
+                    # 收盤價必須位於箱體的上半部 (至少高於箱底 50% 位置)
+                    # 避免選到 "下跌收斂" (Bear Flag)
+                    box_mid_price = box_low + (box_high - box_low) * 0.5
+                    if current_week['Close'] < box_mid_price: continue
+
+                    # 檢查是否接近箱頂 (突破準備)
+                    if current_week['Close'] < box_high * 0.98: continue
                     
-                    # 找到符合條件的，鎖定數據並跳出迴圈 (優先回傳長週期)
                     found_vcp = True
                     final_box_weeks = p
                     final_box_high = box_high
-                    final_box_amp = (range_recent / box_low) * 100 # 顯示近期收斂幅度
+                    final_box_amp = (range_recent / box_low) * 100 
                     break
                 else:
                     # 手動模式
@@ -491,7 +492,6 @@ def get_ghost_metrics(symbol, vol_threshold):
         week_vol_move = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
         move_dollar = df_daily_2y['Close'].iloc[-1] * (week_vol_move / 100)
         
-        # 顯示處理
         if enable_box_breakout:
             box_str = f"箱頂 {round(final_box_high, 2)}"
             box_amp_str = f"VCP{final_box_weeks}W:{round(final_box_amp, 2)}%" 
@@ -502,7 +502,7 @@ def get_ghost_metrics(symbol, vol_threshold):
         return {
             "代號": symbol, 
             "HV Rank": round(hv_rank_val, 1), 
-            "週波動%": box_amp_str, # 顯示 VCP 週期與收斂度
+            "週波動%": box_amp_str, 
             "預期變動$": box_str, 
             "現價": round(df_daily_2y['Close'].iloc[-1], 2),
             "4H 60MA": round(ma60_4h_val, 2) if ma60_4h_val != 0 else "N/A",
