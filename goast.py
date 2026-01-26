@@ -329,30 +329,51 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"掃描完成！共發現 {len(results)} 檔標的。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    # 原始資料 (用於邏輯運算與圖表)
+    # 1. 準備原始資料 (df) 用於繪圖
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False if enable_u_logic else True)
     
-    # 【修改處 1】建立一個專門用於顯示的 DataFrame，將代號轉換為 Yahoo Finance Statistics 連結
+    # 2. 準備顯示資料 (df_display) 用於表格呈現與連結
     df_display = df.copy()
-    # 連結改為 key-statistics
     df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
 
     st.subheader("📋 幽靈策略篩選列表")
-    
-    # 【修改處 2】更新正則表達式以匹配 key-statistics
-    st.dataframe(df_display, column_config={
-        "代號": st.column_config.LinkColumn(
-            "代號", 
-            display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"  # 修改這裡以匹配新的網址格式
-        ),
-        "題材搜尋": st.column_config.LinkColumn("題材與風險", display_text="🔍 查詢"),
-        "_sort_score": None
-    }, hide_index=True, use_container_width=True)
+    st.info("👆 **直接點擊下方表格的「第一欄」來選擇要查看 K 線的股票** (手機不會跳出鍵盤)")
+
+    # 【修改處】啟用表格選取模式 (single-row)
+    event = st.dataframe(
+        df_display,
+        column_config={
+            "代號": st.column_config.LinkColumn(
+                "代號 (點連結看財報)", 
+                display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"
+            ),
+            "題材搜尋": st.column_config.LinkColumn("題材與風險", display_text="🔍 查詢"),
+            "_sort_score": None
+        },
+        hide_index=True,
+        use_container_width=True,
+        on_select="rerun",           # 點選後重新執行以更新圖表
+        selection_mode="single-row"  # 限制只能單選
+    )
     
     st.markdown("---")
-    st.info("💡 手機操作提示：圖表預設為鎖定狀態以利網頁捲動。如需平移或縮放 K 線，請點擊圖表右上角工具列的「十字箭頭 (Pan)」圖示解鎖。")
     st.subheader("🕯️ 三週期 K 線檢視")
     
-    # 下拉選單使用原始 df，確保抓取的是純代號 (如 NVDA) 而不是網址
-    selected = st.selectbox("選擇標的:", df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist())
-    if selected: plot_interactive_chart(selected.split(" - ")[0])
+    # 【邏輯修改】根據表格的「選取結果」來決定畫哪一張圖
+    target_symbol = None
+    
+    # 檢查是否有選取任何一行
+    if len(event.selection.rows) > 0:
+        selected_index = event.selection.rows[0]
+        # 從「原始 df」中獲取純代號 (因為 df_display 的代號是網址)
+        target_symbol = df.iloc[selected_index]["代號"]
+        st.success(f"目前檢視: {target_symbol}")
+    else:
+        # 如果沒選，預設顯示第一筆 (如果有的話)
+        if not df.empty:
+            target_symbol = df.iloc[0]["代號"]
+            st.caption(f"預設顯示列表首位: {target_symbol} (請點擊表格切換)")
+    
+    # 執行繪圖
+    if target_symbol:
+        plot_interactive_chart(target_symbol)
