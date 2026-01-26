@@ -230,7 +230,7 @@ def get_ghost_metrics(symbol, vol_threshold):
         hv_rank = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
         if hv_rank > hv_threshold: return None
         
-        # 【補回】計算週波動與預期變動
+        # 計算週波動與預期變動
         week_vol_move = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
         cur_price = df_daily['Close'].iloc[-1]
         move_dollar = cur_price * (week_vol_move / 100)
@@ -259,13 +259,13 @@ def get_ghost_metrics(symbol, vol_threshold):
                 u_score = (a * 1000) - (abs(dist_pct) * 0.5)
             if a < min_curvature: return None
             
-        # 【補回】財報日期
+        # 財報日期
         earnings_date = "未知"
         cal = stock.calendar
         if cal is not None and 'Earnings Date' in cal:
             earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
 
-        # 【補回】完整回傳欄位
+        # 【修改處】明確標示乖離率為 4H MA60
         return {
             "代號": symbol, 
             "HV Rank": round(hv_rank, 1), 
@@ -273,7 +273,7 @@ def get_ghost_metrics(symbol, vol_threshold):
             "預期變動$": f"±{round(move_dollar, 2)}", 
             "現價": round(cur_price, 2),
             "4H 60MA": round(df_4h['MA60'].iloc[-1], 2),
-            "乖離率": f"{round(dist_pct, 2)}%", 
+            "4H MA60 乖離率": f"{round(dist_pct, 2)}%",  # 已更名
             "產業": translate_industry(stock.info.get('industry', 'N/A')),
             "下次財報": earnings_date, 
             "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
@@ -330,7 +330,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
 
     st.subheader("📋 幽靈策略篩選列表")
     
-    # 【補回】完整的欄位設定
     st.dataframe(
         df_display,
         column_config={
