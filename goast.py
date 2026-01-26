@@ -190,15 +190,16 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 核心繪圖函數 (手機版優化) ---
-def plot_interactive_chart(symbol):
+# --- 5. 核心繪圖函數 (全功能兼容版：手機優化 + 壓力支撐線) ---
+def plot_interactive_chart(symbol, call_wall=None, put_wall=None, vcp_weeks=None, *args, **kwargs):
+    """
+    接收 symbol 以及選擇性的 call_wall, put_wall 參數。
+    *args 與 **kwargs 用於吸收不匹配的參數，防止 TypeError 報錯。
+    """
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     
-    # 【手機版優化設定】
-    # 1. 邊距設為 0，讓圖表撐滿左右兩側
-    # 2. 圖例 (Legend) 移到圖表內部左上角，半透明背景
-    # 3. dragmode 設為 'pan' 方便手機手指拖曳查看
+    # 手機版面設定 (零邊距 + 拖曳模式)
     layout_mobile = dict(
         xaxis_rangeslider_visible=False, 
         height=500, 
@@ -208,11 +209,18 @@ def plot_interactive_chart(symbol):
             y=0.99, x=0.01, 
             xanchor="left", 
             yanchor="top",
-            bgcolor="rgba(255,255,255,0.6)" # 半透明背景避免擋住K線
+            bgcolor="rgba(255,255,255,0.6)"
         ), 
-        dragmode='pan'
+        dragmode='pan' # 手機平移模式
     )
-    config = {'scrollZoom': True, 'displayModeBar': False, 'displaylogo': False} # 隱藏上方工具列(ModeBar)以爭取更多空間
+    config = {'scrollZoom': True, 'displayModeBar': False, 'displaylogo': False}
+
+    # 輔助函數：畫 Call/Put 線
+    def add_walls(fig, c_wall, p_wall):
+        if c_wall and c_wall > 0:
+            fig.add_hline(y=c_wall, line_dash="dash", line_color="red", annotation_text=f"🔥 Call {c_wall}", annotation_position="top right")
+        if p_wall and p_wall > 0:
+            fig.add_hline(y=p_wall, line_dash="dash", line_color="green", annotation_text=f"🛡️ Put {p_wall}", annotation_position="bottom right")
 
     with tab1: # 周線 (max)
         try:
@@ -221,10 +229,12 @@ def plot_interactive_chart(symbol):
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
+                
+                # 加入 Call/Put 線 (如果有傳入數據)
+                add_walls(fig, call_wall, put_wall)
+                
                 fig.update_layout(title=dict(text=f"  {symbol} 周線", x=0.05, font=dict(size=16)), **layout_mobile)
-                # 確保右側不留白：設定 range 為最後 150 根 K 棒到最新一根
-                if len(df) > 150: 
-                    fig.update_xaxes(range=[df.index[-150], df.index[-1]])
+                if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True, config=config)
             else: st.warning("周線無數據")
         except Exception as e: st.error(f"周線圖錯誤: {e}")
@@ -236,11 +246,12 @@ def plot_interactive_chart(symbol):
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
-                # 設定 rangebreaks 去除週末空白
+                
+                add_walls(fig, call_wall, put_wall)
+                
                 fig.update_layout(title=dict(text=f"  {symbol} 日線", x=0.05, font=dict(size=16)), **layout_mobile)
                 fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
-                if len(df) > 200: 
-                    fig.update_xaxes(range=[df.index[-200], df.index[-1]])
+                if len(df) > 200: fig.update_xaxes(range=[df.index[-200], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True, config=config)
             else: st.warning("日線無數據")
         except Exception as e: st.error(f"日線圖錯誤: {e}")
@@ -253,6 +264,9 @@ def plot_interactive_chart(symbol):
                 df['MA60'] = df['Close'].rolling(60).mean(); df['date_str'] = df.index.strftime('%m-%d %H:%M')
                 fig = go.Figure([go.Candlestick(x=df['date_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
                                  go.Scatter(x=df['date_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2), connectgaps=True)])
+                
+                add_walls(fig, call_wall, put_wall)
+                
                 fig.update_layout(title=dict(text=f"  {symbol} 4小時", x=0.05, font=dict(size=16)), **layout_mobile)
                 fig.update_xaxes(type='category', range=[max(0, len(df)-160), len(df)-1])
                 st.plotly_chart(fig, use_container_width=True, config=config)
@@ -471,4 +485,5 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             row = df[df['代號'] == target].iloc[0]
             plot_interactive_chart(target, row['全Call大量'], row['全Put大量'], row.get('_vcp_weeks', 0))
     else: st.write("查無標的")
+
 
