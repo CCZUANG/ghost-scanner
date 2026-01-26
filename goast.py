@@ -218,43 +218,66 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 (含期權牆) ---
+# --- 5. 核心繪圖函數 (美化版期權牆 + VCP Box 回歸) ---
 def plot_interactive_chart(symbol, call_wall, put_wall):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), dragmode=False)
     
-    # 準備期權牆線條 (如果有數值)
-    shapes = []
-    annotations = []
+    # 準備 VCP 箱型 (如果 box mode 開啟)
+    box_shapes = []
     
-    # Call Wall (壓力/軋空點) - 紅色虛線
-    if call_wall and call_wall != "N/A":
-        try:
-            cw_price = float(call_wall)
-            shapes.append(dict(type="line", x0=0, x1=1, xref="paper", y0=cw_price, y1=cw_price, line=dict(color="rgba(255, 99, 71, 0.8)", width=2, dash="dash")))
-            annotations.append(dict(x=0.02, y=cw_price, xref="paper", yref="y", text=f"🔥 Call Wall (Max OI): {cw_price}", showarrow=False, font=dict(color="rgba(255, 99, 71, 1)"), bgcolor="rgba(255, 255, 255, 0.7)"))
-        except: pass
-
-    # Put Wall (支撐) - 綠色虛線
-    if put_wall and put_wall != "N/A":
-        try:
-            pw_price = float(put_wall)
-            shapes.append(dict(type="line", x0=0, x1=1, xref="paper", y0=pw_price, y1=pw_price, line=dict(color="rgba(60, 179, 113, 0.8)", width=2, dash="dash")))
-            annotations.append(dict(x=0.02, y=pw_price, xref="paper", yref="y", text=f"🛡️ Put Wall (Max OI): {pw_price}", showarrow=False, font=dict(color="rgba(60, 179, 113, 1)"), bgcolor="rgba(255, 255, 255, 0.7)"))
-        except: pass
-
-    with tab1: # 周線
+    # 讀取 Session State 確保 UI 連動
+    is_box_mode = st.session_state.get('box_mode_key', False)
+    
+    with tab1: # 周線 (主要看 VCP)
         try:
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                # 箱型 (如果是 box mode 且有資料) - 這裡簡化不畫箱子以免混亂，專注畫期權牆
+                # [修復] VCP 箱型繪製
+                if is_box_mode:
+                    # 使用全域變數或預設值
+                    weeks_to_plot = box_weeks
+                    
+                    # 簡單檢查：如果資料夠長，就畫出最後 N 週的區間
+                    if len(df) > weeks_to_plot + 1:
+                        last_n = df.iloc[-(weeks_to_plot+1):-1]
+                        if len(last_n) > 0:
+                            b_top = last_n['High'].max()
+                            b_bottom = last_n['Low'].min()
+                            # 高透明度藍色區塊
+                            box_shapes.append(dict(
+                                type="rect", 
+                                x0=last_n.index[0], 
+                                y0=b_bottom, 
+                                x1=last_n.index[-1], 
+                                y1=b_top, 
+                                line=dict(width=0), 
+                                fillcolor="rgba(100, 149, 237, 0.2)" # CornflowerBlue, 0.2 opacity
+                            ))
+
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
                 
-                fig.update_layout(title=f"{symbol} 周線 (含期權牆)", shapes=shapes, annotations=annotations, **layout)
+                # 加入期權牆 (使用 add_hline 配合右側標籤，不擋 K 線)
+                if call_wall and call_wall != "N/A":
+                    try:
+                        cw = float(call_wall)
+                        fig.add_hline(y=cw, line_dash="dot", line_color="rgba(255, 99, 71, 0.7)", line_width=1.5,
+                                      annotation_text=f"🔥 Call Wall {cw}", annotation_position="top right", annotation_font_color="#FF6347")
+                    except: pass
+                
+                if put_wall and put_wall != "N/A":
+                    try:
+                        pw = float(put_wall)
+                        fig.add_hline(y=pw, line_dash="dot", line_color="rgba(60, 179, 113, 0.7)", line_width=1.5,
+                                      annotation_text=f"🛡️ Put Wall {pw}", annotation_position="bottom right", annotation_font_color="#3CB371")
+                    except: pass
+
+                if box_shapes: fig.update_layout(shapes=box_shapes)
+                fig.update_layout(title=f"{symbol} 周線 (含期權牆 & VCP)", **layout)
                 if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("周線載入失敗")
@@ -266,7 +289,22 @@ def plot_interactive_chart(symbol, call_wall, put_wall):
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
-                fig.update_layout(title=f"{symbol} 日線 (含期權牆)", shapes=shapes, annotations=annotations, **layout)
+                
+                # 期權牆 (日線也要畫)
+                if call_wall and call_wall != "N/A":
+                    try:
+                        cw = float(call_wall)
+                        fig.add_hline(y=cw, line_dash="dot", line_color="rgba(255, 99, 71, 0.7)", line_width=1.5,
+                                      annotation_text=f"🔥 Call Wall {cw}", annotation_position="top right", annotation_font_color="#FF6347")
+                    except: pass
+                if put_wall and put_wall != "N/A":
+                    try:
+                        pw = float(put_wall)
+                        fig.add_hline(y=pw, line_dash="dot", line_color="rgba(60, 179, 113, 0.7)", line_width=1.5,
+                                      annotation_text=f"🛡️ Put Wall {pw}", annotation_position="bottom right", annotation_font_color="#3CB371")
+                    except: pass
+
+                fig.update_layout(title=f"{symbol} 日線", **layout)
                 if len(df) > 200: fig.update_xaxes(range=[df.index[-200], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("日線載入失敗")
@@ -279,7 +317,22 @@ def plot_interactive_chart(symbol, call_wall, put_wall):
                 df['MA60'] = df['Close'].rolling(60).mean(); df['d_str'] = df.index.strftime('%m-%d %H:%M')
                 fig = go.Figure([go.Candlestick(x=df['d_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
                                  go.Scatter(x=df['d_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
-                fig.update_layout(title=f"{symbol} 4H (含期權牆)", shapes=shapes, annotations=annotations, **layout)
+                
+                # 期權牆 (4H 也要畫)
+                if call_wall and call_wall != "N/A":
+                    try:
+                        cw = float(call_wall)
+                        fig.add_hline(y=cw, line_dash="dot", line_color="rgba(255, 99, 71, 0.7)", line_width=1.5,
+                                      annotation_text=f"Call {cw}", annotation_position="top right", annotation_font_color="#FF6347")
+                    except: pass
+                if put_wall and put_wall != "N/A":
+                    try:
+                        pw = float(put_wall)
+                        fig.add_hline(y=pw, line_dash="dot", line_color="rgba(60, 179, 113, 0.7)", line_width=1.5,
+                                      annotation_text=f"Put {pw}", annotation_position="bottom right", annotation_font_color="#3CB371")
+                    except: pass
+
+                fig.update_layout(title=f"{symbol} 4H", **layout)
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
@@ -486,7 +539,7 @@ def get_ghost_metrics(symbol, vol_threshold):
                     except: continue
         except: pass
 
-        # 【新增過濾】價平 OI 小於 2000 直接剔除
+        # 【OI過濾】
         if total_atm_oi_val < 2000: return None
 
         earnings_date = "未知"
