@@ -190,88 +190,74 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (完美標籤+VCP Box) ---
-def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
+# --- 5. 核心繪圖函數 (手機版優化) ---
+def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
-    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=130, t=30, b=30), legend=dict(orientation="h", y=-0.1, x=0.5), dragmode=False)
     
-    box_shapes = []
-    is_box_mode = st.session_state.get('box_mode_key', False)
-    
-    def get_wall_shapes_annotations(cw, pw):
-        sh, an = [], []
-        if cw and cw != "N/A":
-            try:
-                p = float(cw)
-                sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#FF6347", width=1, dash="dash")))
-                # yshift=10 向上
-                an.append(dict(xref="paper", x=1.01, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="left", yanchor="bottom", yshift=10, font=dict(color="#FF6347", size=12)))
-            except: pass
-        if pw and pw != "N/A":
-            try:
-                p = float(pw)
-                sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#3CB371", width=1, dash="dash")))
-                # yshift=-10 向下
-                an.append(dict(xref="paper", x=1.01, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", yshift=-10, font=dict(color="#3CB371", size=12)))
-            except: pass
-        return sh, an
+    # 【手機版優化設定】
+    # 1. 邊距設為 0，讓圖表撐滿左右兩側
+    # 2. 圖例 (Legend) 移到圖表內部左上角，半透明背景
+    # 3. dragmode 設為 'pan' 方便手機手指拖曳查看
+    layout_mobile = dict(
+        xaxis_rangeslider_visible=False, 
+        height=500, 
+        margin=dict(l=0, r=0, t=30, b=20), 
+        legend=dict(
+            orientation="h", 
+            y=0.99, x=0.01, 
+            xanchor="left", 
+            yanchor="top",
+            bgcolor="rgba(255,255,255,0.6)" # 半透明背景避免擋住K線
+        ), 
+        dragmode='pan'
+    )
+    config = {'scrollZoom': True, 'displayModeBar': False, 'displaylogo': False} # 隱藏上方工具列(ModeBar)以爭取更多空間
 
-    shapes_common, annotations_common = get_wall_shapes_annotations(call_wall, put_wall)
-
-    with tab1: # 周線
+    with tab1: # 周線 (max)
         try:
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
-                
-                # VCP 區塊
-                if is_box_mode and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
-                    last_n = df.iloc[-(vcp_weeks+1):-1]
-                    if len(last_n) > 0:
-                        box_shapes.append(dict(
-                            type="rect", 
-                            x0=last_n.index[0], 
-                            y0=last_n['Low'].min(), 
-                            x1=last_n.index[-1], 
-                            y1=last_n['High'].max(), 
-                            line=dict(width=0), 
-                            fillcolor="rgba(30, 144, 255, 0.25)"
-                        ))
-
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
-                
-                all_shapes = shapes_common + box_shapes
-                fig.update_layout(title=f"{symbol} 周線", shapes=all_shapes, annotations=annotations_common, **layout)
-                if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
-                st.plotly_chart(fig, use_container_width=True)
-        except: st.error("周線載入失敗")
+                fig.update_layout(title=dict(text=f"  {symbol} 周線", x=0.05, font=dict(size=16)), **layout_mobile)
+                # 確保右側不留白：設定 range 為最後 150 根 K 棒到最新一根
+                if len(df) > 150: 
+                    fig.update_xaxes(range=[df.index[-150], df.index[-1]])
+                st.plotly_chart(fig, use_container_width=True, config=config)
+            else: st.warning("周線無數據")
+        except Exception as e: st.error(f"周線圖錯誤: {e}")
 
-    with tab2: # 日線
+    with tab2: # 日線 (10y)
         try:
-            df = stock.history(period="5y")
+            df = stock.history(period="10y")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
-                fig.update_layout(title=f"{symbol} 日線", shapes=shapes_common, annotations=annotations_common, **layout)
-                if len(df) > 200: fig.update_xaxes(range=[df.index[-200], df.index[-1]])
-                st.plotly_chart(fig, use_container_width=True)
-        except: st.error("日線載入失敗")
+                # 設定 rangebreaks 去除週末空白
+                fig.update_layout(title=dict(text=f"  {symbol} 日線", x=0.05, font=dict(size=16)), **layout_mobile)
+                fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                if len(df) > 200: 
+                    fig.update_xaxes(range=[df.index[-200], df.index[-1]])
+                st.plotly_chart(fig, use_container_width=True, config=config)
+            else: st.warning("日線無數據")
+        except Exception as e: st.error(f"日線圖錯誤: {e}")
 
-    with tab3: # 4H
+    with tab3: # 4H (1y)
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
-                df = df_1h.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
-                df['MA60'] = df['Close'].rolling(60).mean(); df['d_str'] = df.index.strftime('%m-%d %H:%M')
-                fig = go.Figure([go.Candlestick(x=df['d_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
-                                 go.Scatter(x=df['d_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
-                fig.update_layout(title=f"{symbol} 4H", shapes=shapes_common, annotations=annotations_common, **layout)
-                st.plotly_chart(fig, use_container_width=True)
-        except: st.error("4H 載入失敗")
-
+                df = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
+                df['MA60'] = df['Close'].rolling(60).mean(); df['date_str'] = df.index.strftime('%m-%d %H:%M')
+                fig = go.Figure([go.Candlestick(x=df['date_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
+                                 go.Scatter(x=df['date_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2), connectgaps=True)])
+                fig.update_layout(title=dict(text=f"  {symbol} 4小時", x=0.05, font=dict(size=16)), **layout_mobile)
+                fig.update_xaxes(type='category', range=[max(0, len(df)-160), len(df)-1])
+                st.plotly_chart(fig, use_container_width=True, config=config)
+            else: st.warning("4H 無數據")
+        except Exception as e: st.error(f"4H 圖錯誤: {e}")
 # --- 6. 核心運算 ---
 def get_ghost_metrics(symbol, vol_threshold, s):
     try:
@@ -485,3 +471,4 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             row = df[df['代號'] == target].iloc[0]
             plot_interactive_chart(target, row['全Call大量'], row['全Put大量'], row.get('_vcp_weeks', 0))
     else: st.write("查無標的")
+
