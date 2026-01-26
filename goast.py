@@ -68,12 +68,12 @@ with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳�
     with col3: st.markdown("### Step 3: 轉化蝴蝶\n過熱時賣出中間價位 Call，鎖定負成本。")
 st.markdown("---")
 
-# --- 3. 側邊欄 (設定收集) ---
+# --- 3. 側邊欄 ---
 st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
-# 建立 settings 字典，解決 Thread 變數抓不到的問題
+# settings 字典，解決變數傳遞問題
 settings = {}
 
 st.sidebar.header("📦 箱型突破 (霸道模式)")
@@ -85,16 +85,19 @@ if enable_box_breakout:
     settings['enable_full_auto_vcp'] = enable_full_auto_vcp
     
     if not enable_full_auto_vcp:
-        settings['box_weeks'] = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20)
-        settings['auto_flag_mode'] = st.sidebar.checkbox("🤖 自動偵測旗型收斂", value=True)
-        settings['box_tightness'] = 100 if settings['auto_flag_mode'] else st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
+        box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20)
+        settings['box_weeks'] = box_weeks
+        
+        auto_flag_mode = st.sidebar.checkbox("🤖 自動偵測旗型收斂", value=True)
+        settings['auto_flag_mode'] = auto_flag_mode
+        
+        settings['box_tightness'] = 100 if auto_flag_mode else st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
     else:
         st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期")
-        settings['box_weeks'] = 52
+        settings['box_weeks'] = 52 # 預設最大值
         settings['auto_flag_mode'] = True
         settings['box_tightness'] = 100
 else:
-    # 預設值 (Ghost Mode 用不到，但為了防止 Key Error)
     settings['enable_full_auto_vcp'] = False
     settings['box_weeks'] = 52
     settings['auto_flag_mode'] = False
@@ -142,13 +145,18 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (修正版) ---
+# --- 5. 繪圖函數 (修復 NameError + VCP Box + 標籤) ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
     stock = yf.Ticker(symbol)
-    # 【關鍵修正】大幅增加右側 Margin (r=180) 以容納標籤
-    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=180, t=30, b=30), legend=dict(orientation="h", y=-0.1, x=0.5), dragmode=False)
+    
+    # 這裡定義 st.tabs，確保 tab1 存在！
+    tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
+    
+    # r=120 提供足夠右側空間給標籤
+    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=120, t=30, b=30), legend=dict(orientation="h", y=-0.1, x=0.5), dragmode=False)
     
     box_shapes = []
+    is_box_mode = st.session_state.get('box_mode_key', False)
     
     # 準備期權牆線條與標籤
     def get_wall_shapes_annotations(cw, pw):
@@ -157,14 +165,14 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
             try:
                 p = float(cw)
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#FF6347", width=1, dash="dash")))
-                # x=1.02, align right
-                an.append(dict(xref="paper", x=1.02, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="left", yanchor="bottom", font=dict(color="#FF6347", size=12)))
+                # x=1.01 放在圖表右側外緣
+                an.append(dict(xref="paper", x=1.01, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="left", yanchor="bottom", font=dict(color="#FF6347", size=11)))
             except: pass
         if pw and pw != "N/A":
             try:
                 p = float(pw)
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#3CB371", width=1, dash="dash")))
-                an.append(dict(xref="paper", x=1.02, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", font=dict(color="#3CB371", size=12)))
+                an.append(dict(xref="paper", x=1.01, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", font=dict(color="#3CB371", size=11)))
             except: pass
         return sh, an
 
@@ -176,20 +184,19 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                # 【關鍵修正】強制繪製藍色區塊 (只要 vcp_weeks > 0 就畫，不依賴 is_box_mode)
-                if vcp_weeks and vcp_weeks > 0:
-                    if len(df) >= vcp_weeks + 1:
-                        last_n = df.iloc[-(vcp_weeks+1):-1]
-                        if len(last_n) > 0:
-                            box_shapes.append(dict(
-                                type="rect", 
-                                x0=last_n.index[0], 
-                                y0=last_n['Low'].min(), 
-                                x1=last_n.index[-1], 
-                                y1=last_n['High'].max(), 
-                                line=dict(width=0), 
-                                fillcolor="rgba(30, 144, 255, 0.15)"
-                            ))
+                # 繪製 VCP 藍色區塊 (只要 vcp_weeks > 0 就畫)
+                if vcp_weeks and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
+                    last_n = df.iloc[-(vcp_weeks+1):-1]
+                    if len(last_n) > 0:
+                        box_shapes.append(dict(
+                            type="rect", 
+                            x0=last_n.index[0], 
+                            y0=last_n['Low'].min(), 
+                            x1=last_n.index[-1], 
+                            y1=last_n['High'].max(), 
+                            line=dict(width=0), 
+                            fillcolor="rgba(30, 144, 255, 0.15)" # 淺藍透明
+                        ))
 
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
@@ -224,8 +231,8 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心運算 (接收 settings 字典) ---
-def get_ghost_metrics(symbol, vol_threshold, s): # s = settings
+# --- 6. 核心運算 ---
+def get_ghost_metrics(symbol, vol_threshold, s):
     try:
         stock = yf.Ticker(symbol)
         df_daily_2y = stock.history(period="2y", interval="1d")
@@ -241,8 +248,6 @@ def get_ghost_metrics(symbol, vol_threshold, s): # s = settings
         if s['enable_box_breakout']:
             df_wk = df_daily_2y.resample('W').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
             if len(df_wk) < 15: return None
-            
-            # (移除強制趨勢濾網，保留給使用者判斷)
             
             avg_vol = df_wk['Volume'].tail(10).mean()
             if avg_vol < vol_threshold * 2: return None
@@ -260,7 +265,6 @@ def get_ghost_metrics(symbol, vol_threshold, s): # s = settings
                 box_low = box_data['Low'].min()
                 if box_low == 0: continue
                 
-                # 自動收斂 (Auto VCP)
                 if s['auto_flag_mode'] or s['enable_full_auto_vcp']:
                     mid = len(box_data)//2
                     old_r = box_data.iloc[:mid]['High'].max() - box_data.iloc[:mid]['Low'].min()
@@ -289,6 +293,7 @@ def get_ghost_metrics(symbol, vol_threshold, s): # s = settings
             
             if not found_vcp: return None
             
+            # 補 4H 數據
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -411,7 +416,6 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.write(f"✅ 已獲得 {len(tickers)} 檔代號，開始過濾...")
         results = []; count = 0; progress = st.progress(0)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 傳遞 settings 字典以避免 Thread NameError
             future_to_ticker = {executor.submit(get_ghost_metrics, t, st.session_state.min_vol_m*1000000, settings): t for t in tickers}
             for future in as_completed(future_to_ticker):
                 data = future.result(); count += 1
