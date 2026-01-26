@@ -125,8 +125,6 @@ st.markdown("---")
 # --- 3. 側邊欄設定 ---
 st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
-
-# 【修改處】將掃描數量移動到這裡 (市場選擇的正下方)
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
 # --- 箱型突破 (霸道模式) ---
@@ -141,11 +139,12 @@ enable_box_breakout = st.sidebar.checkbox(
 
 if enable_box_breakout:
     st.sidebar.warning("⚠️ 霸道模式已啟動：下方其他濾網已暫時失效。")
-    box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 52, help="股票必須在過去 N 週內橫向整理")
-    box_tightness = st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25, help="數值越小代表盤整越緊密 (壓縮越極致)")
+    # 【修改】預設值改為 20週，寬度 30%，比較容易掃到股票
+    box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20, help="股票必須在過去 N 週內橫向整理")
+    box_tightness = st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 30, help="數值越小代表盤整越緊密 (壓縮越極致)")
 else:
-    box_weeks = 52
-    box_tightness = 25
+    box_weeks = 20
+    box_tightness = 30
 
 st.sidebar.divider()
 
@@ -159,8 +158,6 @@ if enable_u_logic:
     enable_spoon_strict = st.sidebar.checkbox("🥄 嚴格勺子模式", value=True, key='spoon_strict_key', on_change=handle_spoon_toggle)
     if enable_spoon_strict:
         spoon_vertex_range = st.sidebar.slider("🥄 勺子底部位置 (%)", 0, 100, (50, 95), 5)
-
-# (scan_limit 已移至上方)
 
 st.sidebar.header("🛡️ 趨勢與點火")
 check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上", value=True)
@@ -216,6 +213,8 @@ def plot_interactive_chart(symbol):
                 
                 shapes = []
                 if enable_box_breakout:
+                    # 繪製箱型 (使用最近收盤的 box_weeks 週)
+                    # 注意：最後一根是 current week，所以要從 -2 往前推
                     last_n = df.iloc[-(box_weeks+1):-1]
                     if len(last_n) > 0:
                         box_top = last_n['High'].max()
@@ -255,19 +254,22 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (修復 N/A 問題) ---
+# --- 6. 核心指標運算 (修復邏輯) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
         
         # --- A. 霸道模式：箱型突破邏輯 ---
         if enable_box_breakout:
+            # 抓取 2年資料以確保足夠計算 52週
             df_wk = stock.history(period="2y", interval="1wk")
             if len(df_wk) < box_weeks + 2: return None
             
-            avg_vol = df_wk['Volume'].tail(10).mean()
-            if avg_vol < vol_threshold / 5: return None 
+            # 1. 寬鬆的成交量過濾 (避免因為週線資料抓取誤差而被誤殺)
+            # 只要最後一週的成交量 > 日均量設定即可 (這是一個最低門檻)
+            if df_wk['Volume'].iloc[-1] < vol_threshold: return None
             
+            # 2. 定義箱型區間 (過去 N 週，不含本週)
             box_start_idx = -(box_weeks + 1)
             box_data = df_wk.iloc[box_start_idx:-1]
             current_week = df_wk.iloc[-1]           
@@ -275,12 +277,15 @@ def get_ghost_metrics(symbol, vol_threshold):
             box_high = box_data['High'].max()
             box_low = box_data['Low'].min()
             
+            # 3. 寬度檢查
             box_amplitude = (box_high - box_low) / box_low * 100
             if box_amplitude > box_tightness: return None
             
-            if current_week['Close'] <= box_high: return None
+            # 4. 突破檢查 (給予 1% 的緩衝，避免剛好差一點點沒掃到)
+            # 只要價格 >= 箱頂的 99%，就算是在攻擊發起點
+            if current_week['Close'] < box_high * 0.99: return None
             
-            # 額外計算 HV Rank 與 4H 乖離率
+            # 5. 補全其他數據 (HV Rank, 4H MA60)
             hv_rank_val = 0
             ma60_4h_val = 0
             dist_pct_val = 0
@@ -307,7 +312,7 @@ def get_ghost_metrics(symbol, vol_threshold):
             return {
                 "代號": symbol, 
                 "HV Rank": round(hv_rank_val, 1),
-                "週波動%": round(box_amplitude, 2), 
+                "週波動%": round(box_amplitude, 2), # 借用此欄位顯示箱體震幅
                 "預期變動$": f"箱頂 {round(box_high, 2)}",
                 "現價": round(current_week['Close'], 2),
                 "4H 60MA": round(ma60_4h_val, 2),
