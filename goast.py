@@ -17,6 +17,7 @@ if 'min_vol_m' not in st.session_state: st.session_state.min_vol_m = 10
 if 'dist_threshold' not in st.session_state: st.session_state.dist_threshold = 8.0
 if 'u_sensitivity' not in st.session_state: st.session_state.u_sensitivity = 30
 
+# 備份機制：用來記住使用者原本的設定
 if 'backup' not in st.session_state:
     st.session_state.backup = {
         'scan_limit': 600, 'min_vol_m': 10, 'dist_threshold': 8.0, 'u_sensitivity': 30
@@ -45,6 +46,21 @@ def handle_spoon_toggle():
     """勺子模式獨立連動"""
     if st.session_state.spoon_strict_key:
         st.session_state.u_sensitivity = 240
+
+def handle_ignition_toggle():
+    """【新增】連動邏輯：啟動週線點火時，自動放寬乖離率限制，關閉時還原"""
+    # 讀取目前選擇的模式
+    mode = st.session_state.ignition_mode_key
+    
+    if mode == "🚀 週線點火 (大波段過上週高)":
+        # 1. 先備份現在的設定 (例如 8.0)
+        st.session_state.backup['dist_threshold'] = st.session_state.dist_threshold
+        # 2. 自動拉到最大 (50.0)，避免突破股被過濾掉
+        st.session_state.dist_threshold = 50.0
+    else:
+        # 3. 切換回其他模式時，還原成原本的設定 (例如 8.0)
+        if 'dist_threshold' in st.session_state.backup:
+            st.session_state.dist_threshold = st.session_state.backup['dist_threshold']
 
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
@@ -128,18 +144,22 @@ check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上 (昨日<今日
 check_ma60_strong_trend = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢 (連續5週上升)", value=True, help="強制篩選出「週線」MA60 呈現穩定上升曲線的股票 (如 CCL)")
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
 
-# --- 【修改】動能點火濾網 (新增週線選項) ---
+# --- 動能點火濾網 (加入 key 和 on_change 連動) ---
 st.sidebar.header("🔥 動能點火 (進場即發動)")
 ignition_mode = st.sidebar.radio(
     "選擇點火週期 (右側交易):",
     ["🚫 不啟用 (左側佈局)", "⚡ 4H 點火 (短線突破前高)", "🚀 週線點火 (大波段過上週高)"],
     index=0,
-    help="4H點火適合短線快進快出；週線點火適合確認波段大趨勢發動。"
+    key="ignition_mode_key",         # 設定 key 以便讀取狀態
+    on_change=handle_ignition_toggle, # 設定連動函數
+    help="4H點火適合短線快進快出；週線點火適合確認波段大趨勢發動 (開啟週線點火時，會自動放寬乖離率限制)。"
 )
 
 st.sidebar.header("⚙️ 基礎篩選")
 hv_threshold = st.sidebar.slider("HV Rank 門檻", 10, 100, 30)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
+
+# 這裡使用 key='dist_threshold'，數值會被 handle_ignition_toggle 動態修改
 dist_threshold = st.sidebar.slider("距離 4H MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
 
 if enable_u_logic:
@@ -234,14 +254,12 @@ def get_ghost_metrics(symbol, vol_threshold):
             else:
                 return None
 
-        # 【新增】週線點火濾網 (Weekly Ignition)
+        # 週線點火濾網 (Weekly Ignition)
         if ignition_mode == "🚀 週線點火 (大波段過上週高)":
             if df_wk is not None and len(df_wk) >= 2:
                 # 邏輯：現價 > 上週最高價
-                # 注意：iloc[-1] 是本週(進行中)，iloc[-2] 是上週(已收盤)
-                curr_price = df_1h['Close'].iloc[-1] # 用最新的小時價作為現價比較準
+                curr_price = df_1h['Close'].iloc[-1]
                 prev_week_high = df_wk['High'].iloc[-2]
-                
                 if curr_price <= prev_week_high: return None
             else:
                 return None
