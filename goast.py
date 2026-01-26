@@ -50,19 +50,59 @@ def handle_spoon_toggle():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 ---
+# --- 2. 核心策略導引區 (恢復詳細版) ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
+    
     with col_step1:
         st.markdown("### 第一步：建立試探部位 (Rule 1)")
-        st.markdown("**動作**: 買進低價 Call + 賣出高價 Call (多頭價差)。\n**失敗**: 2日橫盤或跌破支撐。")
+        st.markdown("""
+        **🚀 啟動時機**
+        放量突破關鍵壓力或回測支撐成功時。
+
+        **動作**
+        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
+
+        **成功指標**
+        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
+
+        **❌ 失敗判定**
+        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
+        """)
+        
     with col_step2:
         st.markdown("### 第二步：動能加碼 (Rule 2)")
-        st.markdown("**動作**: 浮盈後，加買更高階 Call。\n**指標**: IV 擴張 (水結成冰)。")
+        st.markdown("""
+        **🚀 啟動時機**
+        當價差已產生「浮盈」，且股價衝向賣出價位時。
+
+        **動作**
+        加買 **更高一階的 Call**。
+
+        **成功指標**
+        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
+
+        **❌ 失敗判定**
+        動能衰竭或 IV 下降（冰塊融化）。
+        """)
+        
     with col_step3:
         st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
-        st.markdown("**動作**: 漲破加碼價時，加賣中間價位 Call。\n**目標**: 達成負成本蝴蝶型態。")
-    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。")
+        st.markdown("""
+        **🚀 啟動時機**
+        股價強勢漲破加碼價，且市場出現過熱訊號時。
+
+        **動作**
+        **再加賣一張中間價位的 Call** (總計賣出兩張)。
+
+        **成功指標**
+        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
+
+        **❌ 失敗判定**
+        爆量不漲或價格遠超最高階。
+        """)
+
+    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
 
 st.markdown("---")
 
@@ -251,7 +291,7 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         tickers = get_tickers_robust(market_choice)[:scan_limit]
         total_tickers = len(tickers)
         
-        # 【修正處】加回顯示數量的代碼
+        # 顯示掃描進度數量
         status.write(f"✅ 已獲得 {total_tickers} 檔代號，開始技術面過濾...")
         
         results = []; count = 0
