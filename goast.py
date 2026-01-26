@@ -31,7 +31,7 @@ def handle_u_logic_toggle():
             'dist_threshold': st.session_state.dist_threshold,
             'u_sensitivity': st.session_state.u_sensitivity
         })
-        # 【修改】啟動 U 型戰法時，因預設開啟嚴格勺子，直接將敏感度拉到最大 (240)
+        # 啟動 U 型戰法時，因預設開啟嚴格勺子，直接將敏感度拉到最大 (240)
         st.session_state.scan_limit = 600
         st.session_state.min_vol_m = 1
         st.session_state.dist_threshold = 50.0
@@ -43,104 +43,51 @@ def handle_u_logic_toggle():
         st.session_state.u_sensitivity = st.session_state.backup['u_sensitivity']
 
 def handle_spoon_toggle():
-    """【新增】勺子模式獨立連動：當手動勾選嚴格勺子時，也將敏感度設為最大"""
+    """勺子模式獨立連動：當手動勾選嚴格勺子時，也將敏感度設為最大"""
     if st.session_state.spoon_strict_key:
         st.session_state.u_sensitivity = 240
 
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (Step 1-3 詳細準則 - 排版優化版) ---
+# --- 2. 核心策略導引區 ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
-    
     with col_step1:
         st.markdown("### 第一步：建立試探部位 (Rule 1)")
-        st.markdown("""
-        **🚀 啟動時機**
-        放量突破關鍵壓力或回測支撐成功時。
-
-        **動作**
-        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
-
-        **成功指標**
-        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
-
-        **❌ 失敗判定**
-        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
-        """)
-        
+        st.markdown("**動作**: 買進低價 Call + 賣出高價 Call (多頭價差)。\n**失敗**: 2日橫盤或跌破支撐。")
     with col_step2:
         st.markdown("### 第二步：動能加碼 (Rule 2)")
-        st.markdown("""
-        **🚀 啟動時機**
-        當價差已產生「浮盈」，且股價衝向賣出價位時。
-
-        **動作**
-        加買 **更高一階的 Call**。
-
-        **成功指標**
-        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
-
-        **❌ 失敗判定**
-        動能衰竭或 IV 下降（冰塊融化）。
-        """)
-        
+        st.markdown("**動作**: 浮盈後，加買更高階 Call。\n**指標**: IV 擴張 (水結成冰)。")
     with col_step3:
         st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
-        st.markdown("""
-        **🚀 啟動時機**
-        股價強勢漲破加碼價，且市場出現過熱訊號時。
-
-        **動作**
-        **再加賣一張中間價位的 Call** (總計賣出兩張)。
-
-        **成功指標**
-        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
-
-        **❌ 失敗判定**
-        爆量不漲或價格遠超最高階。
-        """)
-
-    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
+        st.markdown("**動作**: 漲破加碼價時，加賣中間價位 Call。\n**目標**: 達成負成本蝴蝶型態。")
+    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。")
 
 st.markdown("---")
 
-# --- 3. 側邊欄 ---
+# --- 3. 側邊欄設定 ---
 st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 
 st.sidebar.header("📈 戰法連動")
 enable_u_logic = st.sidebar.checkbox("✅ 啟動 4小時 U型戰法連動", value=False, key='u_logic_key', on_change=handle_u_logic_toggle)
 
-# --- 嚴格勺子模式與範圍設定 ---
+# --- 嚴格勺子模式 ---
 enable_spoon_strict = False
-spoon_vertex_range = (50, 95) # 預設值
-
+spoon_vertex_range = (50, 95)
 if enable_u_logic:
-    # 【修改】加入 key='spoon_strict_key' 與 on_change=handle_spoon_toggle
-    enable_spoon_strict = st.sidebar.checkbox(
-        "🥄 嚴格勺子模式 (尋找剛翻揚)", 
-        value=True, 
-        key='spoon_strict_key',
-        on_change=handle_spoon_toggle,
-        help="強制要求 MA60 的最低點發生在近期，排除已經漲很多的股票。"
-    )
-    
+    enable_spoon_strict = st.sidebar.checkbox("🥄 嚴格勺子模式 (尋找剛翻揚)", value=True, key='spoon_strict_key', on_change=handle_spoon_toggle)
     if enable_spoon_strict:
-        spoon_vertex_range = st.sidebar.slider(
-            "🥄 勺子底部發生位置 (%)",
-            min_value=0, 
-            max_value=100, 
-            value=(50, 95), 
-            step=5,
-            help="設定拋物線最低點(Vertex)必須落在回測期間的哪個百分比區段。"
-        )
+        spoon_vertex_range = st.sidebar.slider("🥄 勺子底部位置 (%)", 0, 100, (50, 95), 5)
 
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
+# --- 【更新】趨勢濾網 (修正為週線邏輯) ---
 st.sidebar.header("🛡️ 趨勢濾網")
-check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上", value=True)
+check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上 (昨日<今日)", value=True)
+# 修改選項標籤，明確指出是「週線」
+check_ma60_strong_trend = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢 (連續5週上升)", value=True, help="強制篩選出「週線」MA60 呈現穩定上升曲線的股票 (如 CCL)")
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
 
 st.sidebar.header("⚙️ 基礎篩選")
@@ -149,8 +96,7 @@ min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vo
 dist_threshold = st.sidebar.slider("距離 MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
 
 if enable_u_logic:
-    # 【修改】最大值調整為 240
-    u_sensitivity = st.sidebar.slider("U型敏感度 (Lookback)", 20, 240, key='u_sensitivity')
+    u_sensitivity = st.sidebar.slider("U型敏感度", 20, 240, key='u_sensitivity')
     min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
 else:
     u_sensitivity, min_curvature = 30, 0.003
@@ -159,16 +105,13 @@ max_workers = st.sidebar.slider("🚀 平行核心數", 1, 32, 16)
 # --- 4. 產業翻譯 ---
 INDUSTRY_MAP = {
     "technology": "科技", "software": "軟體服務", "semiconductors": "半導體",
-    "financial": "金融銀行", "healthcare": "醫療保健", "biotechnology": "生物科技",
-    "energy": "能源", "industrials": "工業製造", "consumer cyclical": "循環性消費",
-    "consumer defensive": "防禦性消費", "utilities": "公用事業", "real estate": "房地產",
-    "communication services": "通訊服務", "basic materials": "基礎原物料",
-    "entertainment": "影視娛樂", "internet content": "網路內容", "auto": "汽車產業",
-    "retail": "零售通路", "aerospace": "航太軍工", "banks": "銀行業"
+    "financial": "金融銀行", "healthcare": "醫療保健", "energy": "能源", 
+    "industrials": "工業製造", "consumer cyclical": "循環性消費", 
+    "consumer defensive": "防禦性消費", "utilities": "公用事業", 
+    "real estate": "房地產", "communication": "通訊服務", "retail": "零售"
 }
-
 def translate_industry(eng):
-    if not eng or eng == "N/A": return "未知"
+    if not eng: return "未知"
     target = eng.lower()
     for key, val in INDUSTRY_MAP.items():
         if key in target: return val
@@ -178,210 +121,192 @@ def translate_industry(eng):
 def plot_interactive_chart(symbol):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
-    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"), dragmode=False)
-    config = {'scrollZoom': True, 'displayModeBar': True, 'displaylogo': False}
-
-    with tab1: # 周線 (max)
+    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), dragmode=False)
+    
+    with tab1: # 周線
         try:
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
-                fig.update_layout(title=dict(text=f"{symbol} 周線 (全歷史)", x=0.02), **layout)
+                fig.update_layout(title=f"{symbol} 周線", **layout)
                 if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
-                st.plotly_chart(fig, use_container_width=True, config=config)
-            else: st.warning("周線無數據")
-        except Exception as e: st.error(f"周線圖錯誤: {e}")
+                st.plotly_chart(fig, use_container_width=True)
+        except: st.error("周線載入失敗")
 
-    with tab2: # 日線 (10y)
+    with tab2: # 日線
         try:
             df = stock.history(period="10y")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
-                fig.update_layout(title=dict(text=f"{symbol} 日線 (10年)", x=0.02), **layout); fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                fig.update_layout(title=f"{symbol} 日線", **layout)
                 if len(df) > 200: fig.update_xaxes(range=[df.index[-200], df.index[-1]])
-                st.plotly_chart(fig, use_container_width=True, config=config)
-            else: st.warning("日線無數據")
-        except Exception as e: st.error(f"日線圖錯誤: {e}")
+                st.plotly_chart(fig, use_container_width=True)
+        except: st.error("日線載入失敗")
 
-    with tab3: # 4H (1y)
+    with tab3: # 4H
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
-                df = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
-                df['MA60'] = df['Close'].rolling(60).mean(); df['date_str'] = df.index.strftime('%m-%d %H:%M')
-                fig = go.Figure([go.Candlestick(x=df['date_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
-                                 go.Scatter(x=df['date_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3), connectgaps=True)])
-                fig.update_layout(title=dict(text=f"{symbol} 4小時圖 (1年)", x=0.02), **layout); fig.update_xaxes(type='category', range=[max(0, len(df)-160), len(df)])
-                st.plotly_chart(fig, use_container_width=True, config=config)
-            else: st.warning("4H 無數據")
-        except Exception as e: st.error(f"4H 圖錯誤: {e}")
+                df = df_1h.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+                df['MA60'] = df['Close'].rolling(60).mean(); df['d_str'] = df.index.strftime('%m-%d %H:%M')
+                fig = go.Figure([go.Candlestick(x=df['d_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
+                                 go.Scatter(x=df['d_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
+                fig.update_layout(title=f"{symbol} 4H", **layout)
+                st.plotly_chart(fig, use_container_width=True)
+        except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (含勺子邏輯) ---
+# --- 6. 核心指標運算 (含週線 MA60 邏輯) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
-        stock = yf.Ticker(symbol); df_1h = stock.history(period="1y", interval="1h")
+        stock = yf.Ticker(symbol); 
+        # 1. 先抓 1年小時資料 (用於成交量與 4H 策略)
+        df_1h = stock.history(period="1y", interval="1h")
         if len(df_1h) < 240: return None
+        
+        # 2. 轉換為日線做基礎過濾
         df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
         df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
         
+        # 3. 基礎日線趨勢檢查
         if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
-        if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
         if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
         
+        # 【修改處】週線 MA60 強勢趨勢過濾 (連續 5 週上升)
+        if check_ma60_strong_trend:
+            # 額外抓取 2年週線資料 (因為1年小時資料不足以計算長週期的週線 MA60)
+            df_wk = stock.history(period="2y", interval="1wk")
+            if len(df_wk) > 65: # 確保資料足夠
+                df_wk['MA60'] = df_wk['Close'].rolling(60).mean()
+                # 檢查最後 5 週 MA60 是否呈現嚴格遞增
+                if not df_wk['MA60'].tail(5).is_monotonic_increasing: return None
+            else:
+                return None # 資料不足視為不通過
+
+        # 4. 價格與波動率檢查
+        if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
+        
         log_ret = np.log(df_daily['Close'] / df_daily['Close'].shift(1))
-        vol_30d = log_ret.rolling(window=30).std() * np.sqrt(252) * 100
+        vol_30d = log_ret.rolling(30).std() * np.sqrt(252) * 100
         hv_rank = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
         if hv_rank > hv_threshold: return None
         
-        week_vol_move = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
-        cur_price = df_daily['Close'].iloc[-1]
-        move_dollar = cur_price * (week_vol_move / 100)
-
+        # 5. 乖離率與 U 型 (使用 4H 資料)
         df_4h = df_1h.resample('4h').agg({'Close': 'last'}).dropna()
         df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
         dist_pct = ((df_4h['Close'].iloc[-1] - df_4h['MA60'].iloc[-1]) / df_4h['MA60'].iloc[-1]) * 100
-        if abs(dist_pct) > dist_threshold: return None 
+        if abs(dist_pct) > dist_threshold: return None
         
         u_score = -abs(dist_pct)
         if enable_u_logic:
-            y = df_4h['MA60'].tail(u_sensitivity).values
-            x = np.arange(len(y))
-            coeffs = np.polyfit(x, y, 2)
-            a, b, c = coeffs
+            y = df_4h['MA60'].tail(u_sensitivity).values; x = np.arange(len(y))
+            a, b, c = np.polyfit(x, y, 2)
             vertex_x = -b / (2 * a)
+            if a <= 0: return None
             
-            if a <= 0: return None # 開口必須向上
-            
-            # --- 嚴格勺子邏輯 (動態參數化) ---
             if enable_spoon_strict:
-                # 將百分比 (0-100) 轉為小數 (0.0-1.0)
-                min_pos_pct = spoon_vertex_range[0] / 100.0
-                max_pos_pct = spoon_vertex_range[1] / 100.0
-                
-                if not (len(y) * min_pos_pct <= vertex_x <= len(y) * max_pos_pct): return None
-                
-                if y[-1] <= y[-2]: return None
-                if y[0] < y[-1]: return None 
+                min_p, max_p = spoon_vertex_range
+                if not (len(y)*(min_p/100) <= vertex_x <= len(y)*(max_p/100)): return None
+                if y[-1] <= y[-2] or y[0] < y[-1]: return None
                 u_score = 1000
             else:
-                if not (len(y) * 0.3 <= vertex_x <= len(y) * 1.1): return None
+                if not (len(y)*0.3 <= vertex_x <= len(y)*1.1): return None
                 if y[-1] <= y[-2]: return None
                 u_score = (a * 1000) - (abs(dist_pct) * 0.5)
-            
             if a < min_curvature: return None
-        
-        earnings_date = "未知"
-        cal = stock.calendar
-        if cal is not None and 'Earnings Date' in cal:
-            earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
-            
+
         return {
-            "代號": symbol, "HV Rank": round(hv_rank, 1), "週波動%": round(week_vol_move, 2),
-            "預期變動$": f"±{round(move_dollar, 2)}", "現價": round(cur_price, 2),
-            "4H 60MA": round(df_4h['MA60'].iloc[-1], 2), "乖離率": f"{round(dist_pct, 2)}%",
-            "產業": translate_industry(stock.info.get('industry', 'N/A')),
-            "下次財報": earnings_date, "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", "_sort_score": u_score
+            "代號": symbol, "HV Rank": round(hv_rank, 1), "現價": round(df_daily['Close'].iloc[-1], 2),
+            "乖離率": f"{round(dist_pct, 2)}%", "產業": translate_industry(stock.info.get('industry', 'N/A')),
+            "_sort_score": u_score
         }
     except: return None
 
-# --- 7. 市場代號抓取 ---
+# --- 7. 抓取代號 ---
 @st.cache_data(ttl=3600)
 def get_tickers_robust(choice):
     headers = {"User-Agent": "Mozilla/5.0"}
     tickers = []
-    try:
+    try: # S&P 500
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        res = requests.get(url, headers=headers); df = pd.read_html(StringIO(res.text))[0]
-        col = [c for c in df.columns if 'Symbol' in c or 'Ticker' in c][0]; tickers.extend(df[col].tolist())
+        df = pd.read_html(StringIO(requests.get(url, headers=headers).text))[0]
+        tickers.extend(df[df.columns[0]].tolist())
     except: pass
-    try:
+    try: # Nasdaq 100
         url = "https://en.wikipedia.org/wiki/Nasdaq-100"
-        res = requests.get(url, headers=headers); dfs = pd.read_html(StringIO(res.text))
+        dfs = pd.read_html(StringIO(requests.get(url, headers=headers).text))
         for df in dfs:
-            col = [c for c in df.columns if 'Ticker' in c or 'Symbol' in c]
-            if col and 95 <= len(df) <= 105:
-                tickers.extend(df[col[0]].tolist()); break
+            if 95 <= len(df) <= 105: tickers.extend(df[df.columns[0]].tolist()); break
     except: pass
     final = list(set([str(t).replace('.', '-') for t in tickers if len(str(t)) < 6]))
-    return final if final else ["AAPL", "NVDA", "TSLA", "PLTR", "AMD"]
+    return final if final else ["AAPL", "NVDA", "TSLA", "AMD"]
 
 # --- 8. 主程式執行 ---
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     st.session_state['scan_results'] = None
     min_volume_threshold = st.session_state.min_vol_m * 1000000 
     
-    with st.status("🔍 市場掃描中...", expanded=True) as status:
+    with st.status("🔍 掃描中...", expanded=True) as status:
         tickers = get_tickers_robust(market_choice)[:scan_limit]
-        total_tickers = len(tickers)
-        status.write(f"✅ 已獲得 {total_tickers} 檔代號，開始技術面過濾...")
-        results = []; progress = st.progress(0); count = 0
+        results = []; count = 0; total = len(tickers)
+        progress = st.progress(0)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_ticker = {executor.submit(get_ghost_metrics, t, min_volume_threshold): t for t in tickers}
             for future in as_completed(future_to_ticker):
                 data = future.result(); count += 1
-                progress.progress(count / total_tickers if total_tickers > 0 else 0)
+                progress.progress(count / total if total > 0 else 0)
                 if data: results.append(data)
         st.session_state['scan_results'] = results
-        status.update(label=f"掃描完成！共發現 {len(results)} 檔標的。", state="complete", expanded=False)
+        status.update(label=f"完成！共 {len(results)} 檔。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    # 1. 準備原始資料 (df) 用於繪圖
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False if enable_u_logic else True)
     
-    # 2. 準備顯示資料 (df_display) 用於表格呈現與連結
+    # 顯示資料 (Yahoo Statistics 連結)
     df_display = df.copy()
     df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
 
     st.subheader("📋 幽靈策略篩選列表")
-    
-    # 表格區維持不變，僅供連結跳轉
     st.dataframe(
         df_display,
         column_config={
-            "代號": st.column_config.LinkColumn(
-                "代號 (點連結看財報)", 
-                display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"
-            ),
-            "題材搜尋": st.column_config.LinkColumn("題材與風險", display_text="🔍 查詢"),
+            "代號": st.column_config.LinkColumn("代號 (點我跳轉)", display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"),
             "_sort_score": None
         },
-        hide_index=True,
-        use_container_width=True
+        hide_index=True, use_container_width=True
     )
     
     st.markdown("---")
-    st.subheader("🕯️ 三週期 K 線檢視")
-
-    # --- 【修改處】無鍵盤下拉選單模擬器 ---
-    # 準備選項清單
+    
+    # --- 【無鍵盤選股區】使用 Expander + Radio 解決手機鍵盤問題 ---
     options = df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist()
     
-    # 如果還沒有選擇，預設選第一個
-    if 'selected_stock_idx' not in st.session_state:
-        st.session_state.selected_stock_idx = 0
-
-    # 顯示目前選到的股票，讓使用者知道現在看的是哪一支
-    current_label = options[st.session_state.selected_stock_idx] if options else "無資料"
-
-    # 使用 Expander (摺疊選單) 包裹 Radio (單選鈕)
-    # 優點：不佔空間、點擊展開、純點選操作、絕對不會跳鍵盤
+    if 'selected_idx' not in st.session_state: st.session_state.selected_idx = 0
+    
+    # 取得目前顯示的股票標籤
+    current_label = options[st.session_state.selected_idx] if options and st.session_state.selected_idx < len(options) else "無資料"
+    
+    st.subheader("🕯️ 三週期 K 線檢視")
+    
+    # 使用 Expander 包裹 Radio，模擬下拉選單但無鍵盤
     with st.expander(f"🔽 點擊切換股票 (目前: {current_label.split(' - ')[0]})", expanded=False):
-        selected = st.radio(
-            "請點選標的：", 
-            options, 
-            index=st.session_state.selected_stock_idx,
-            key="stock_radio_selection",
-            label_visibility="collapsed" # 隱藏標題，讓介面更乾淨
-        )
-        
-        # 更新 session state 的 index，保持同步
-        if selected in options:
-            st.session_state.selected_stock_idx = options.index(selected)
+        if options:
+            selected_opt = st.radio(
+                "請直接點選 (不會跳出鍵盤):", 
+                options, 
+                index=st.session_state.selected_idx,
+                key="stock_radio"
+            )
+            # 更新索引
+            if selected_opt in options:
+                st.session_state.selected_idx = options.index(selected_opt)
+        else:
+            st.write("查無符合條件標的")
 
-    # 繪圖邏輯
-    if selected:
-        plot_interactive_chart(selected.split(" - ")[0])
+    # 繪圖
+    if options:
+        target = options[st.session_state.selected_idx].split(" - ")[0]
+        plot_interactive_chart(target)
