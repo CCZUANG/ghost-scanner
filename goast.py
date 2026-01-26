@@ -60,60 +60,12 @@ def sync_logic_state():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (詳細版回歸) ---
+# --- 2. 核心策略導引區 ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
-    col_step1, col_step2, col_step3 = st.columns(3)
-    
-    with col_step1:
-        st.markdown("### 第一步：建立試探部位 (Rule 1)")
-        st.markdown("""
-        **🚀 啟動時機**
-        放量突破關鍵壓力或回測支撐成功時。
-
-        **動作**
-        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
-
-        **成功指標**
-        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
-
-        **❌ 失敗判定**
-        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
-        """)
-        
-    with col_step2:
-        st.markdown("### 第二步：動能加碼 (Rule 2)")
-        st.markdown("""
-        **🚀 啟動時機**
-        當價差已產生「浮盈」，且股價衝向賣出價位時。
-
-        **動作**
-        加買 **更高一階的 Call**。
-
-        **成功指標**
-        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
-
-        **❌ 失敗判定**
-        動能衰竭或 IV 下降（冰塊融化）。
-        """)
-        
-    with col_step3:
-        st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
-        st.markdown("""
-        **🚀 啟動時機**
-        股價強勢漲破加碼價，且市場出現過熱訊號時。
-
-        **動作**
-        **再加賣一張中間價位的 Call** (總計賣出兩張)。
-
-        **成功指標**
-        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
-
-        **❌ 失敗判定**
-        爆量不漲或價格遠超最高階。
-        """)
-
-    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
-
+    col1, col2, col3 = st.columns(3)
+    with col1: st.markdown("### Step 1: 試探部位\n買低 Call + 賣高 Call (多頭價差)。")
+    with col2: st.markdown("### Step 2: 動能加碼\n浮盈且 IV 擴張時，加買更高階 Call。")
+    with col3: st.markdown("### Step 3: 轉化蝴蝶\n過熱時賣出中間價位 Call，鎖定負成本。")
 st.markdown("---")
 
 # --- 3. 側邊欄 ---
@@ -121,6 +73,7 @@ st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
+# settings 字典，解決變數傳遞問題
 settings = {}
 
 st.sidebar.header("📦 箱型突破 (霸道模式)")
@@ -134,12 +87,14 @@ if enable_box_breakout:
     if not enable_full_auto_vcp:
         box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20)
         settings['box_weeks'] = box_weeks
+        
         auto_flag_mode = st.sidebar.checkbox("🤖 自動偵測旗型收斂", value=True)
         settings['auto_flag_mode'] = auto_flag_mode
+        
         settings['box_tightness'] = 100 if auto_flag_mode else st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
     else:
         st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期")
-        settings['box_weeks'] = 52 
+        settings['box_weeks'] = 52 # 預設最大值
         settings['auto_flag_mode'] = True
         settings['box_tightness'] = 100
 else:
@@ -190,88 +145,92 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 核心繪圖函數 (全功能兼容版：手機優化 + 壓力支撐線) ---
-def plot_interactive_chart(symbol, call_wall=None, put_wall=None, vcp_weeks=None, *args, **kwargs):
-    """
-    接收 symbol 以及選擇性的 call_wall, put_wall 參數。
-    *args 與 **kwargs 用於吸收不匹配的參數，防止 TypeError 報錯。
-    """
+# --- 5. 繪圖函數 (修復 NameError + VCP Box + 標籤) ---
+def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
     stock = yf.Ticker(symbol)
+    
+    # 這裡定義 st.tabs，確保 tab1 存在！
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     
-    # 手機版面設定 (零邊距 + 拖曳模式)
-    layout_mobile = dict(
-        xaxis_rangeslider_visible=False, 
-        height=500, 
-        margin=dict(l=0, r=0, t=30, b=20), 
-        legend=dict(
-            orientation="h", 
-            y=0.99, x=0.01, 
-            xanchor="left", 
-            yanchor="top",
-            bgcolor="rgba(255,255,255,0.6)"
-        ), 
-        dragmode='pan' # 手機平移模式
-    )
-    config = {'scrollZoom': True, 'displayModeBar': False, 'displaylogo': False}
+    # r=120 提供足夠右側空間給標籤
+    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=120, t=30, b=30), legend=dict(orientation="h", y=-0.1, x=0.5), dragmode=False)
+    
+    box_shapes = []
+    is_box_mode = st.session_state.get('box_mode_key', False)
+    
+    # 準備期權牆線條與標籤
+    def get_wall_shapes_annotations(cw, pw):
+        sh, an = [], []
+        if cw and cw != "N/A":
+            try:
+                p = float(cw)
+                sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#FF6347", width=1, dash="dash")))
+                # x=1.01 放在圖表右側外緣
+                an.append(dict(xref="paper", x=1.01, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="left", yanchor="bottom", font=dict(color="#FF6347", size=11)))
+            except: pass
+        if pw and pw != "N/A":
+            try:
+                p = float(pw)
+                sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#3CB371", width=1, dash="dash")))
+                an.append(dict(xref="paper", x=1.01, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", font=dict(color="#3CB371", size=11)))
+            except: pass
+        return sh, an
 
-    # 輔助函數：畫 Call/Put 線
-    def add_walls(fig, c_wall, p_wall):
-        if c_wall and c_wall > 0:
-            fig.add_hline(y=c_wall, line_dash="dash", line_color="red", annotation_text=f"🔥 Call {c_wall}", annotation_position="top right")
-        if p_wall and p_wall > 0:
-            fig.add_hline(y=p_wall, line_dash="dash", line_color="green", annotation_text=f"🛡️ Put {p_wall}", annotation_position="bottom right")
+    shapes_common, annotations_common = get_wall_shapes_annotations(call_wall, put_wall)
 
-    with tab1: # 周線 (max)
+    with tab1: # 周線
         try:
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
+                
+                # 繪製 VCP 藍色區塊 (只要 vcp_weeks > 0 就畫)
+                if vcp_weeks and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
+                    last_n = df.iloc[-(vcp_weeks+1):-1]
+                    if len(last_n) > 0:
+                        box_shapes.append(dict(
+                            type="rect", 
+                            x0=last_n.index[0], 
+                            y0=last_n['Low'].min(), 
+                            x1=last_n.index[-1], 
+                            y1=last_n['High'].max(), 
+                            line=dict(width=0), 
+                            fillcolor="rgba(30, 144, 255, 0.15)" # 淺藍透明
+                        ))
+
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
                 
-                # 加入 Call/Put 線 (如果有傳入數據)
-                add_walls(fig, call_wall, put_wall)
-                
-                fig.update_layout(title=dict(text=f"  {symbol} 周線", x=0.05, font=dict(size=16)), **layout_mobile)
+                all_shapes = shapes_common + box_shapes
+                fig.update_layout(title=f"{symbol} 周線", shapes=all_shapes, annotations=annotations_common, **layout)
                 if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
-                st.plotly_chart(fig, use_container_width=True, config=config)
-            else: st.warning("周線無數據")
-        except Exception as e: st.error(f"周線圖錯誤: {e}")
+                st.plotly_chart(fig, use_container_width=True)
+        except: st.error("周線載入失敗")
 
-    with tab2: # 日線 (10y)
+    with tab2: # 日線
         try:
-            df = stock.history(period="10y")
+            df = stock.history(period="5y")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
-                
-                add_walls(fig, call_wall, put_wall)
-                
-                fig.update_layout(title=dict(text=f"  {symbol} 日線", x=0.05, font=dict(size=16)), **layout_mobile)
-                fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                fig.update_layout(title=f"{symbol} 日線", shapes=shapes_common, annotations=annotations_common, **layout)
                 if len(df) > 200: fig.update_xaxes(range=[df.index[-200], df.index[-1]])
-                st.plotly_chart(fig, use_container_width=True, config=config)
-            else: st.warning("日線無數據")
-        except Exception as e: st.error(f"日線圖錯誤: {e}")
+                st.plotly_chart(fig, use_container_width=True)
+        except: st.error("日線載入失敗")
 
-    with tab3: # 4H (1y)
+    with tab3: # 4H
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
-                df = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
-                df['MA60'] = df['Close'].rolling(60).mean(); df['date_str'] = df.index.strftime('%m-%d %H:%M')
-                fig = go.Figure([go.Candlestick(x=df['date_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
-                                 go.Scatter(x=df['date_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2), connectgaps=True)])
-                
-                add_walls(fig, call_wall, put_wall)
-                
-                fig.update_layout(title=dict(text=f"  {symbol} 4小時", x=0.05, font=dict(size=16)), **layout_mobile)
-                fig.update_xaxes(type='category', range=[max(0, len(df)-160), len(df)-1])
-                st.plotly_chart(fig, use_container_width=True, config=config)
-            else: st.warning("4H 無數據")
-        except Exception as e: st.error(f"4H 圖錯誤: {e}")
+                df = df_1h.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+                df['MA60'] = df['Close'].rolling(60).mean(); df['d_str'] = df.index.strftime('%m-%d %H:%M')
+                fig = go.Figure([go.Candlestick(x=df['d_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
+                                 go.Scatter(x=df['d_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
+                fig.update_layout(title=f"{symbol} 4H", shapes=shapes_common, annotations=annotations_common, **layout)
+                st.plotly_chart(fig, use_container_width=True)
+        except: st.error("4H 載入失敗")
+
 # --- 6. 核心運算 ---
 def get_ghost_metrics(symbol, vol_threshold, s):
     try:
@@ -285,7 +244,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
         ma60_4h_val, dist_pct_val = 0, 0
         final_box_weeks = 0 
 
-        # --- A. 霸道模式 ---
+        # --- A. 霸道模式 (箱型) ---
         if s['enable_box_breakout']:
             df_wk = df_daily_2y.resample('W').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
             if len(df_wk) < 15: return None
@@ -306,24 +265,23 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                 box_low = box_data['Low'].min()
                 if box_low == 0: continue
                 
-                # 自動收斂
                 if s['auto_flag_mode'] or s['enable_full_auto_vcp']:
                     mid = len(box_data)//2
                     old_r = box_data.iloc[:mid]['High'].max() - box_data.iloc[:mid]['Low'].min()
                     new_r = box_data.iloc[mid:]['High'].max() - box_data.iloc[mid:]['Low'].min()
                     
                     if old_r == 0: continue
-                    if new_r > old_r * 0.85: continue 
+                    if new_r > old_r * 0.85: continue # 波動未收縮
                     
-                    if current_week['Close'] < box_high * 0.90: continue 
-                    if current_week['Close'] < box_high * 0.98: continue 
+                    if current_week['Close'] < box_high * 0.90: continue # 必須在箱體上緣
+                    if current_week['Close'] < box_high * 0.98: continue # 準備突破
                     
                     found_vcp = True
                     final_box_weeks = p
                     box_str = f"突破 {round(box_high, 2)}"
                     box_amp_str = f"VCP{p}W"
                     break
-                else: 
+                else: # 手動寬度
                     amp = (box_high - box_low) / box_low * 100
                     if amp > s['box_tightness']: continue
                     if current_week['Close'] >= box_high * 0.99:
@@ -335,6 +293,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
             
             if not found_vcp: return None
             
+            # 補 4H 數據
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -344,7 +303,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                     dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
             except: pass
 
-        # --- B. 幽靈模式 ---
+        # --- B. 幽靈模式 (非霸道) ---
         else:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) < 240: return None
@@ -387,7 +346,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
             box_str = f"±{round(df_daily_2y['Close'].iloc[-1]*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
 
-        # --- 期權 ---
+        # --- 期權與回傳 ---
         atm_oi = "N/A"; c_max = "N/A"; p_max = "N/A"; tot_oi = 0
         try:
             opts = stock.options
@@ -485,5 +444,3 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             row = df[df['代號'] == target].iloc[0]
             plot_interactive_chart(target, row['全Call大量'], row['全Put大量'], row.get('_vcp_weeks', 0))
     else: st.write("查無標的")
-
-
