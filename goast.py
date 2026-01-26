@@ -128,9 +128,14 @@ check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上 (昨日<今日
 check_ma60_strong_trend = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢 (連續5週上升)", value=True, help="強制篩選出「週線」MA60 呈現穩定上升曲線的股票 (如 CCL)")
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
 
-# 【新增】動能點火濾網
+# --- 【修改】動能點火濾網 (新增週線選項) ---
 st.sidebar.header("🔥 動能點火 (進場即發動)")
-check_ignition = st.sidebar.checkbox("✅ 尋找即將發動 (4H K線突破前高)", value=False, help="篩選出「當下 4H 收盤價」大於「前一根 4H 最高價」的股票，代表短期買盤轉強，不再只是死守支撐。")
+ignition_mode = st.sidebar.radio(
+    "選擇點火週期 (右側交易):",
+    ["🚫 不啟用 (左側佈局)", "⚡ 4H 點火 (短線突破前高)", "🚀 週線點火 (大波段過上週高)"],
+    index=0,
+    help="4H點火適合短線快進快出；週線點火適合確認波段大趨勢發動。"
+)
 
 st.sidebar.header("⚙️ 基礎篩選")
 hv_threshold = st.sidebar.slider("HV Rank 門檻", 10, 100, 30)
@@ -201,7 +206,7 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (含點火邏輯) ---
+# --- 6. 核心指標運算 (含週線點火邏輯) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol); 
@@ -216,12 +221,28 @@ def get_ghost_metrics(symbol, vol_threshold):
         if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
         if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
         
+        # 3. 週線資料處理 (Trend Filter 或 Ignition Filter 需要)
+        df_wk = None
+        if check_ma60_strong_trend or ignition_mode == "🚀 週線點火 (大波段過上週高)":
+            df_wk = stock.history(period="2y", interval="1wk")
+        
         # 週線 MA60 強勢趨勢過濾
         if check_ma60_strong_trend:
-            df_wk = stock.history(period="2y", interval="1wk")
-            if len(df_wk) > 65:
+            if df_wk is not None and len(df_wk) > 65:
                 df_wk['MA60'] = df_wk['Close'].rolling(60).mean()
                 if not df_wk['MA60'].tail(5).is_monotonic_increasing: return None
+            else:
+                return None
+
+        # 【新增】週線點火濾網 (Weekly Ignition)
+        if ignition_mode == "🚀 週線點火 (大波段過上週高)":
+            if df_wk is not None and len(df_wk) >= 2:
+                # 邏輯：現價 > 上週最高價
+                # 注意：iloc[-1] 是本週(進行中)，iloc[-2] 是上週(已收盤)
+                curr_price = df_1h['Close'].iloc[-1] # 用最新的小時價作為現價比較準
+                prev_week_high = df_wk['High'].iloc[-2]
+                
+                if curr_price <= prev_week_high: return None
             else:
                 return None
 
@@ -236,22 +257,17 @@ def get_ghost_metrics(symbol, vol_threshold):
         cur_price = df_daily['Close'].iloc[-1]
         move_dollar = cur_price * (week_vol_move / 100)
         
-        # 5. 乖離率與 U 型 (針對 4H)
-        # 這裡需要同時保留 High, Low 等資訊給點火濾網使用
+        # 5. 乖離率與 4H 處理
         df_4h = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
         df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
         dist_pct = ((df_4h['Close'].iloc[-1] - df_4h['MA60'].iloc[-1]) / df_4h['MA60'].iloc[-1]) * 100
         if abs(dist_pct) > dist_threshold: return None
         
-        # 【新增】動能點火濾網 (Ignition Filter)
-        if check_ignition:
-            # 確保有足夠的 K棒來比較
+        # 4H 點火濾網
+        if ignition_mode == "⚡ 4H 點火 (短線突破前高)":
             if len(df_4h) < 2: return None
-            
             curr_close = df_4h['Close'].iloc[-1]
-            prev_high = df_4h['High'].iloc[-2] # 前一根的最高價
-            
-            # 邏輯：收盤價 突破 前一根最高價 (強勢吞噬/突破)
+            prev_high = df_4h['High'].iloc[-2]
             if curr_close <= prev_high: return None
         
         u_score = -abs(dist_pct)
