@@ -31,7 +31,6 @@ def handle_u_logic_toggle():
             'dist_threshold': st.session_state.dist_threshold,
             'u_sensitivity': st.session_state.u_sensitivity
         })
-        # 啟動 U 型戰法時，因預設開啟嚴格勺子，直接將敏感度拉到最大 (240)
         st.session_state.scan_limit = 600
         st.session_state.min_vol_m = 1
         st.session_state.dist_threshold = 50.0
@@ -43,14 +42,14 @@ def handle_u_logic_toggle():
         st.session_state.u_sensitivity = st.session_state.backup['u_sensitivity']
 
 def handle_spoon_toggle():
-    """勺子模式獨立連動：當手動勾選嚴格勺子時，也將敏感度設為最大"""
+    """勺子模式獨立連動"""
     if st.session_state.spoon_strict_key:
         st.session_state.u_sensitivity = 240
 
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (恢復詳細版) ---
+# --- 2. 核心策略導引區 (詳細版) ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
     
@@ -123,17 +122,16 @@ if enable_u_logic:
 
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
-# --- 趨勢濾網 (週線 MA60) ---
+# --- 趨勢濾網 ---
 st.sidebar.header("🛡️ 趨勢濾網")
 check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上 (昨日<今日)", value=True)
-# 確保是週線邏輯
 check_ma60_strong_trend = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢 (連續5週上升)", value=True, help="強制篩選出「週線」MA60 呈現穩定上升曲線的股票 (如 CCL)")
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
 
 st.sidebar.header("⚙️ 基礎篩選")
 hv_threshold = st.sidebar.slider("HV Rank 門檻", 10, 100, 30)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
-dist_threshold = st.sidebar.slider("距離 MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
+dist_threshold = st.sidebar.slider("距離 4H MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
 
 if enable_u_logic:
     u_sensitivity = st.sidebar.slider("U型敏感度", 20, 240, key='u_sensitivity')
@@ -199,7 +197,7 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (含週線 MA60) ---
+# --- 6. 核心指標運算 (完整欄位回歸) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol); 
@@ -232,7 +230,12 @@ def get_ghost_metrics(symbol, vol_threshold):
         hv_rank = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
         if hv_rank > hv_threshold: return None
         
-        # 5. 乖離率與 U 型
+        # 【補回】計算週波動與預期變動
+        week_vol_move = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
+        cur_price = df_daily['Close'].iloc[-1]
+        move_dollar = cur_price * (week_vol_move / 100)
+        
+        # 5. 乖離率與 U 型 (針對 4H)
         df_4h = df_1h.resample('4h').agg({'Close': 'last'}).dropna()
         df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
         dist_pct = ((df_4h['Close'].iloc[-1] - df_4h['MA60'].iloc[-1]) / df_4h['MA60'].iloc[-1]) * 100
@@ -255,10 +258,25 @@ def get_ghost_metrics(symbol, vol_threshold):
                 if y[-1] <= y[-2]: return None
                 u_score = (a * 1000) - (abs(dist_pct) * 0.5)
             if a < min_curvature: return None
+            
+        # 【補回】財報日期
+        earnings_date = "未知"
+        cal = stock.calendar
+        if cal is not None and 'Earnings Date' in cal:
+            earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
 
+        # 【補回】完整回傳欄位
         return {
-            "代號": symbol, "HV Rank": round(hv_rank, 1), "現價": round(df_daily['Close'].iloc[-1], 2),
-            "乖離率": f"{round(dist_pct, 2)}%", "產業": translate_industry(stock.info.get('industry', 'N/A')),
+            "代號": symbol, 
+            "HV Rank": round(hv_rank, 1), 
+            "週波動%": round(week_vol_move, 2),
+            "預期變動$": f"±{round(move_dollar, 2)}", 
+            "現價": round(cur_price, 2),
+            "4H 60MA": round(df_4h['MA60'].iloc[-1], 2),
+            "乖離率": f"{round(dist_pct, 2)}%", 
+            "產業": translate_industry(stock.info.get('industry', 'N/A')),
+            "下次財報": earnings_date, 
+            "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
             "_sort_score": u_score
         }
     except: return None
@@ -291,7 +309,6 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         tickers = get_tickers_robust(market_choice)[:scan_limit]
         total_tickers = len(tickers)
         
-        # 顯示掃描進度數量
         status.write(f"✅ 已獲得 {total_tickers} 檔代號，開始技術面過濾...")
         
         results = []; count = 0
@@ -308,15 +325,17 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False if enable_u_logic else True)
     
-    # 顯示資料 (Yahoo Statistics 連結)
     df_display = df.copy()
     df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
 
     st.subheader("📋 幽靈策略篩選列表")
+    
+    # 【補回】完整的欄位設定
     st.dataframe(
         df_display,
         column_config={
             "代號": st.column_config.LinkColumn("代號 (點我跳轉)", display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"),
+            "題材搜尋": st.column_config.LinkColumn("題材與風險", display_text="🔍 查詢"),
             "_sort_score": None
         },
         hide_index=True, use_container_width=True
@@ -325,15 +344,11 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     st.markdown("---")
     st.subheader("🕯️ 三週期 K 線檢視")
     
-    # --- 【膠囊選單區 (st.pills)】 ---
-    # 美觀、不跳鍵盤、不需依賴 Index 避免 Bug
     options = df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist()
 
     if options:
-        # 預設選擇第一個
         default_option = options[0]
         
-        # 使用 Pills (膠囊) 元件
         selected_pill = st.pills(
             "👉 請點擊標的 (不會跳出鍵盤)",
             options,
@@ -342,7 +357,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             key="pills_selector"
         )
         
-        # 繪圖邏輯：直接根據膠囊選到的文字來畫圖
         if selected_pill:
             target = selected_pill.split(" - ")[0]
             st.caption(f"目前檢視: {target}")
