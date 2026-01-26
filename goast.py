@@ -251,17 +251,13 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (數據源修復+雙重突破+期權OI) ---
+# --- 6. 核心指標運算 (數據源修復+雙重突破+進階期權OI) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
-        
-        # 統一抓取日線資料 (2年)
         df_daily_2y = stock.history(period="2y", interval="1d")
-        
         if len(df_daily_2y) < 250: return None 
         
-        # 準備基礎數據
         log_ret = np.log(df_daily_2y['Close'] / df_daily_2y['Close'].shift(1))
         vol_30d = log_ret.rolling(30).std() * np.sqrt(252) * 100
         hv_rank_val = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
@@ -269,16 +265,9 @@ def get_ghost_metrics(symbol, vol_threshold):
         ma60_4h_val = 0
         dist_pct_val = 0
         
-        # --- A. 霸道模式：箱型突破邏輯 ---
+        # --- A. 霸道模式 ---
         if enable_box_breakout:
-            df_wk = df_daily_2y.resample('W').agg({
-                'Open': 'first', 
-                'High': 'max', 
-                'Low': 'min', 
-                'Close': 'last', 
-                'Volume': 'sum'
-            }).dropna()
-            
+            df_wk = df_daily_2y.resample('W').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
             if len(df_wk) < box_weeks + 2: return None
             
             avg_vol = df_wk['Volume'].tail(10).mean()
@@ -287,14 +276,12 @@ def get_ghost_metrics(symbol, vol_threshold):
             box_start_idx = -(box_weeks + 1)
             box_data = df_wk.iloc[box_start_idx:-1]
             current_week = df_wk.iloc[-1]           
-            
             box_high = box_data['High'].max()
             box_low = box_data['Low'].min()
             
             if box_low == 0: return None
             box_amplitude = (box_high - box_low) / box_low * 100
             if box_amplitude > box_tightness: return None
-            
             if current_week['Close'] < box_high * 0.99: return None
             
             try:
@@ -306,157 +293,143 @@ def get_ghost_metrics(symbol, vol_threshold):
                     dist_pct_val = ((df_4h['Close'].iloc[-1] - ma60_4h_val) / ma60_4h_val) * 100
             except: pass
 
-            # 【新增】抓取價平期權未平倉量 (ATM OI)
-            atm_oi_display = "N/A"
-            try:
-                options_dates = stock.options
-                if options_dates:
-                    nearest_date = options_dates[0]
-                    chain = stock.option_chain(nearest_date)
-                    calls = chain.calls
-                    puts = chain.puts
-                    
-                    cur_price = current_week['Close']
-                    closest_strike_idx = (calls['strike'] - cur_price).abs().idxmin()
-                    atm_strike = calls.loc[closest_strike_idx, 'strike']
-                    
-                    c_oi = calls[calls['strike'] == atm_strike]['openInterest'].sum()
-                    p_oi = puts[puts['strike'] == atm_strike]['openInterest'].sum()
-                    total_atm_oi = c_oi + p_oi
-                    atm_oi_display = f"{int(total_atm_oi):,}"
+        # --- B. 幽靈模式 ---
+        else:
+            df_1h = stock.history(period="1y", interval="1h")
+            if len(df_1h) < 240: return None
+            df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
+            df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
+            
+            if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
+            if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
+            
+            df_wk = None
+            if check_ma60_strong_trend or "週線點火" in ignition_mode:
+                df_wk = df_daily_2y.resample('W').agg({'Close': 'last', 'High': 'max'}).dropna()
+            
+            if check_ma60_strong_trend:
+                if df_wk is not None and len(df_wk) > 65:
+                    df_wk['MA60'] = df_wk['Close'].rolling(60).mean()
+                    if not df_wk['MA60'].tail(5).is_monotonic_increasing: return None
+                else: return None
+
+            if "週線點火" in ignition_mode:
+                if df_wk is not None and len(df_wk) >= 3:
+                    curr_price = df_daily_2y['Close'].iloc[-1] 
+                    prev_week_high = df_wk['High'].iloc[-2]    
+                    prev_week_close = df_wk['Close'].iloc[-2]  
+                    prev_2_week_high = df_wk['High'].iloc[-3]  
+                    cond1 = curr_price > prev_week_high
+                    cond2 = prev_week_close > prev_2_week_high
+                    if not (cond1 or cond2): return None
+                else: return None
+
+            if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
+            if hv_rank_val > hv_threshold: return None
+            
+            df_4h = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+            df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
+            dist_pct_val = ((df_4h['Close'].iloc[-1] - df_4h['MA60'].iloc[-1]) / df_4h['MA60'].iloc[-1]) * 100
+            ma60_4h_val = df_4h['MA60'].iloc[-1]
+            
+            if abs(dist_pct_val) > dist_threshold: return None
+            
+            if "4H 點火" in ignition_mode:
+                if len(df_4h) < 2: return None
+                if df_4h['Close'].iloc[-1] <= df_4h['High'].iloc[-2]: return None
+            
+            # --- U型邏輯 ---
+            if enable_u_logic:
+                y = df_4h['MA60'].tail(u_sensitivity).values; x = np.arange(len(y))
+                a, b, c = np.polyfit(x, y, 2)
+                vertex_x = -b / (2 * a)
+                if a <= 0: return None
+                if enable_spoon_strict:
+                    min_p, max_p = spoon_vertex_range
+                    if not (len(y)*(min_p/100) <= vertex_x <= len(y)*(max_p/100)): return None
+                    if y[-1] <= y[-2] or y[0] < y[-1]: return None
                 else:
-                    atm_oi_display = "無"
-            except: pass
+                    if not (len(y)*0.3 <= vertex_x <= len(y)*1.1): return None
+                    if y[-1] <= y[-2]: return None
+                if a < min_curvature: return None
 
-            earnings_date = "未知"
-            cal = stock.calendar
-            if cal is not None and 'Earnings Date' in cal:
-                earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
+        # --- 期權數據 (共用) ---
+        atm_oi_display = "N/A"
+        near_call_max = "N/A"
+        near_put_max = "N/A"
+        all_call_max = "N/A"
+        all_put_max = "N/A"
+        
+        try:
+            opts = stock.options
+            if opts:
+                # 1. 最近期 (Nearest)
+                chain_near = stock.option_chain(opts[0])
+                cur_price = df_daily_2y['Close'].iloc[-1]
                 
-            return {
-                "代號": symbol, 
-                "HV Rank": round(hv_rank_val, 1),
-                "週波動%": round(box_amplitude, 2), 
-                "預期變動$": f"箱頂 {round(box_high, 2)}",
-                "現價": round(current_week['Close'], 2),
-                "4H 60MA": round(ma60_4h_val, 2) if ma60_4h_val != 0 else "N/A",
-                "4H MA60 乖離率": f"{round(dist_pct_val, 2)}%" if ma60_4h_val != 0 else "N/A",
-                "價平OI": atm_oi_display, # 新增欄位
-                "產業": translate_industry(stock.info.get('industry', 'N/A')),
-                "下次財報": earnings_date, 
-                "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
-                "_sort_score": 99999 
-            }
-
-        # --- B. 原本的幽靈策略邏輯 (非霸道模式) ---
-        
-        df_1h = stock.history(period="1y", interval="1h")
-        if len(df_1h) < 240: return None
-        
-        df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
-        df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
-        
-        if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
-        if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
-        
-        df_wk = None
-        if check_ma60_strong_trend or "週線點火" in ignition_mode:
-            df_wk = df_daily_2y.resample('W').agg({'Close': 'last', 'High': 'max'}).dropna()
-        
-        if check_ma60_strong_trend:
-            if df_wk is not None and len(df_wk) > 65:
-                df_wk['MA60'] = df_wk['Close'].rolling(60).mean()
-                if not df_wk['MA60'].tail(5).is_monotonic_increasing: return None
-            else: return None
-
-        if "週線點火" in ignition_mode:
-            if df_wk is not None and len(df_wk) >= 3:
-                curr_price = df_daily_2y['Close'].iloc[-1] 
-                prev_week_high = df_wk['High'].iloc[-2]    
-                prev_week_close = df_wk['Close'].iloc[-2]  
-                prev_2_week_high = df_wk['High'].iloc[-3]  
+                # 計算價平 OI
+                closest_idx = (chain_near.calls['strike'] - cur_price).abs().idxmin()
+                atm_strike = chain_near.calls.loc[closest_idx, 'strike']
+                c_oi = chain_near.calls[chain_near.calls['strike'] == atm_strike]['openInterest'].sum()
+                p_oi = chain_near.puts[chain_near.puts['strike'] == atm_strike]['openInterest'].sum()
+                atm_oi_display = f"{int(c_oi + p_oi):,}"
                 
-                cond1 = curr_price > prev_week_high
-                cond2 = prev_week_close > prev_2_week_high
+                # 計算最近期 Call/Put 最大量履約價
+                if not chain_near.calls.empty:
+                    near_call_max = chain_near.calls.loc[chain_near.calls['openInterest'].idxmax(), 'strike']
+                if not chain_near.puts.empty:
+                    near_put_max = chain_near.puts.loc[chain_near.puts['openInterest'].idxmax(), 'strike']
                 
-                if not (cond1 or cond2): return None
-            else: return None
+                # 2. 全部 (All - 掃描前6個月)
+                max_c_oi = 0; max_p_oi = 0
+                
+                # 遍歷前 6 個結算日 (兼顧速度與廣度)
+                scan_dates = opts[:6] 
+                
+                for d in scan_dates:
+                    try:
+                        ch = stock.option_chain(d)
+                        if not ch.calls.empty:
+                            c_max_row = ch.calls.loc[ch.calls['openInterest'].idxmax()]
+                            if c_max_row['openInterest'] > max_c_oi:
+                                max_c_oi = c_max_row['openInterest']
+                                all_call_max = c_max_row['strike']
+                        if not ch.puts.empty:
+                            p_max_row = ch.puts.loc[ch.puts['openInterest'].idxmax()]
+                            if p_max_row['openInterest'] > max_p_oi:
+                                max_p_oi = p_max_row['openInterest']
+                                all_put_max = p_max_row['strike']
+                    except: continue
+        except: pass
 
-        if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
-        if hv_rank_val > hv_threshold: return None
-        
-        week_vol_move = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
-        cur_price = df_daily['Close'].iloc[-1]
-        move_dollar = cur_price * (week_vol_move / 100)
-        
-        df_4h = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
-        df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
-        dist_pct = ((df_4h['Close'].iloc[-1] - df_4h['MA60'].iloc[-1]) / df_4h['MA60'].iloc[-1]) * 100
-        if abs(dist_pct) > dist_threshold: return None
-        
-        if "4H 點火" in ignition_mode:
-            if len(df_4h) < 2: return None
-            if df_4h['Close'].iloc[-1] <= df_4h['High'].iloc[-2]: return None
-        
-        u_score = -abs(dist_pct)
-        if enable_u_logic:
-            y = df_4h['MA60'].tail(u_sensitivity).values; x = np.arange(len(y))
-            a, b, c = np.polyfit(x, y, 2)
-            vertex_x = -b / (2 * a)
-            if a <= 0: return None
-            
-            if enable_spoon_strict:
-                min_p, max_p = spoon_vertex_range
-                if not (len(y)*(min_p/100) <= vertex_x <= len(y)*(max_p/100)): return None
-                if y[-1] <= y[-2] or y[0] < y[-1]: return None
-                u_score = 1000
-            else:
-                if not (len(y)*0.3 <= vertex_x <= len(y)*1.1): return None
-                if y[-1] <= y[-2]: return None
-                u_score = (a * 1000) - (abs(dist_pct) * 0.5)
-            if a < min_curvature: return None
-            
         earnings_date = "未知"
         cal = stock.calendar
         if cal is not None and 'Earnings Date' in cal:
             earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
-
-        # 【新增】抓取價平期權未平倉量 (ATM OI)
-        atm_oi_display = "N/A"
-        try:
-            options_dates = stock.options
-            if options_dates:
-                nearest_date = options_dates[0]
-                chain = stock.option_chain(nearest_date)
-                calls = chain.calls
-                puts = chain.puts
-                
-                # 找到與現價最接近的 Strike
-                closest_strike_idx = (calls['strike'] - cur_price).abs().idxmin()
-                atm_strike = calls.loc[closest_strike_idx, 'strike']
-                
-                # 加總 Call + Put 的 OI
-                c_oi = calls[calls['strike'] == atm_strike]['openInterest'].sum()
-                p_oi = puts[puts['strike'] == atm_strike]['openInterest'].sum()
-                total_atm_oi = c_oi + p_oi
-                atm_oi_display = f"{int(total_atm_oi):,}"
-            else:
-                atm_oi_display = "無"
-        except: pass
+            
+        # 整理回傳 (霸道與非霸道共用格式)
+        week_vol_move = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
+        move_dollar = df_daily_2y['Close'].iloc[-1] * (week_vol_move / 100)
+        box_str = f"箱頂 {round(box_high, 2)}" if enable_box_breakout else f"±{round(move_dollar, 2)}"
+        box_amp_str = round(box_amplitude, 2) if enable_box_breakout else round(week_vol_move, 2)
 
         return {
             "代號": symbol, 
             "HV Rank": round(hv_rank_val, 1), 
-            "週波動%": round(week_vol_move, 2),
-            "預期變動$": f"±{round(move_dollar, 2)}", 
-            "現價": round(cur_price, 2),
-            "4H 60MA": round(df_4h['MA60'].iloc[-1], 2),
-            "4H MA60 乖離率": f"{round(dist_pct, 2)}%",  
-            "價平OI": atm_oi_display, # 新增欄位
+            "週波動%": box_amp_str,
+            "預期變動$": box_str, 
+            "現價": round(df_daily_2y['Close'].iloc[-1], 2),
+            "4H 60MA": round(ma60_4h_val, 2) if ma60_4h_val != 0 else "N/A",
+            "4H MA60 乖離率": f"{round(dist_pct_val, 2)}%" if ma60_4h_val != 0 else "N/A",
+            "價平OI": atm_oi_display,
+            "近Call大量": near_call_max, # 新增
+            "近Put大量": near_put_max,   # 新增
+            "全Call大量": all_call_max,   # 新增
+            "全Put大量": all_put_max,     # 新增
             "產業": translate_industry(stock.info.get('industry', 'N/A')),
             "下次財報": earnings_date, 
             "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
-            "_sort_score": u_score
+            "_sort_score": 99999 if enable_box_breakout else -abs(dist_pct_val)
         }
     except: return None
 
