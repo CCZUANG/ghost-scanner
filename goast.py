@@ -126,6 +126,9 @@ st.markdown("---")
 st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 
+# 【修改處】將掃描數量移動到這裡 (市場選擇的正下方)
+scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
+
 # --- 箱型突破 (霸道模式) ---
 st.sidebar.header("📦 箱型突破 (霸道模式)")
 enable_box_breakout = st.sidebar.checkbox(
@@ -138,7 +141,6 @@ enable_box_breakout = st.sidebar.checkbox(
 
 if enable_box_breakout:
     st.sidebar.warning("⚠️ 霸道模式已啟動：下方其他濾網已暫時失效。")
-    # 【修改處】最大值改為 52，預設值改為 52
     box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 52, help="股票必須在過去 N 週內橫向整理")
     box_tightness = st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25, help="數值越小代表盤整越緊密 (壓縮越極致)")
 else:
@@ -158,7 +160,7 @@ if enable_u_logic:
     if enable_spoon_strict:
         spoon_vertex_range = st.sidebar.slider("🥄 勺子底部位置 (%)", 0, 100, (50, 95), 5)
 
-scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
+# (scan_limit 已移至上方)
 
 st.sidebar.header("🛡️ 趨勢與點火")
 check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上", value=True)
@@ -276,31 +278,26 @@ def get_ghost_metrics(symbol, vol_threshold):
             box_amplitude = (box_high - box_low) / box_low * 100
             if box_amplitude > box_tightness: return None
             
-            # 必須突破
             if current_week['Close'] <= box_high: return None
             
-            # 【修復處】突破後，額外計算 HV Rank 與 4H 乖離率
+            # 額外計算 HV Rank 與 4H 乖離率
             hv_rank_val = 0
             ma60_4h_val = 0
             dist_pct_val = 0
             
             try:
-                # 這裡額外抓取 1y 小時資料來計算精確指標
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
-                    # 算 HV Rank
                     df_daily = df_1h.resample('D').agg({'Close': 'last'}).dropna()
                     log_ret = np.log(df_daily['Close'] / df_daily['Close'].shift(1))
                     vol_30d = log_ret.rolling(30).std() * np.sqrt(252) * 100
                     hv_rank_val = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
                     
-                    # 算 4H 數據
                     df_4h = df_1h.resample('4h').agg({'Close': 'last'}).dropna()
                     df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
                     ma60_4h_val = df_4h['MA60'].iloc[-1]
                     dist_pct_val = ((df_4h['Close'].iloc[-1] - ma60_4h_val) / ma60_4h_val) * 100
-            except:
-                pass # 計算失敗就維持 0
+            except: pass
 
             earnings_date = "未知"
             cal = stock.calendar
@@ -309,12 +306,12 @@ def get_ghost_metrics(symbol, vol_threshold):
                 
             return {
                 "代號": symbol, 
-                "HV Rank": round(hv_rank_val, 1), # 填入真實計算值
+                "HV Rank": round(hv_rank_val, 1),
                 "週波動%": round(box_amplitude, 2), 
                 "預期變動$": f"箱頂 {round(box_high, 2)}",
                 "現價": round(current_week['Close'], 2),
-                "4H 60MA": round(ma60_4h_val, 2), # 填入真實計算值
-                "4H MA60 乖離率": f"{round(dist_pct_val, 2)}%", # 填入真實計算值
+                "4H 60MA": round(ma60_4h_val, 2),
+                "4H MA60 乖離率": f"{round(dist_pct_val, 2)}%",
                 "產業": translate_industry(stock.info.get('industry', 'N/A')),
                 "下次財報": earnings_date, 
                 "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
@@ -450,7 +447,6 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"完成！共 {len(results)} 檔。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    # 【修改處】預設使用 HV Rank 排序 (由小到大)
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank", ascending=True)
     
     df_display = df.copy()
