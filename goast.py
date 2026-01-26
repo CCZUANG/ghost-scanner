@@ -128,6 +128,10 @@ check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上 (昨日<今日
 check_ma60_strong_trend = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢 (連續5週上升)", value=True, help="強制篩選出「週線」MA60 呈現穩定上升曲線的股票 (如 CCL)")
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
 
+# 【新增】動能點火濾網
+st.sidebar.header("🔥 動能點火 (進場即發動)")
+check_ignition = st.sidebar.checkbox("✅ 尋找即將發動 (4H K線突破前高)", value=False, help="篩選出「當下 4H 收盤價」大於「前一根 4H 最高價」的股票，代表短期買盤轉強，不再只是死守支撐。")
+
 st.sidebar.header("⚙️ 基礎篩選")
 hv_threshold = st.sidebar.slider("HV Rank 門檻", 10, 100, 30)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
@@ -197,11 +201,11 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (完整欄位回歸) ---
+# --- 6. 核心指標運算 (含點火邏輯) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol); 
-        # 1. 先抓 1年小時資料 (用於成交量與 4H 策略)
+        # 1. 先抓 1年小時資料
         df_1h = stock.history(period="1y", interval="1h")
         if len(df_1h) < 240: return None
         
@@ -209,7 +213,6 @@ def get_ghost_metrics(symbol, vol_threshold):
         df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
         df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
         
-        # 3. 基礎日線趨勢檢查
         if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
         if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
         
@@ -222,7 +225,6 @@ def get_ghost_metrics(symbol, vol_threshold):
             else:
                 return None
 
-        # 4. 價格與波動率檢查
         if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
         
         log_ret = np.log(df_daily['Close'] / df_daily['Close'].shift(1))
@@ -230,16 +232,27 @@ def get_ghost_metrics(symbol, vol_threshold):
         hv_rank = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
         if hv_rank > hv_threshold: return None
         
-        # 計算週波動與預期變動
         week_vol_move = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
         cur_price = df_daily['Close'].iloc[-1]
         move_dollar = cur_price * (week_vol_move / 100)
         
         # 5. 乖離率與 U 型 (針對 4H)
-        df_4h = df_1h.resample('4h').agg({'Close': 'last'}).dropna()
+        # 這裡需要同時保留 High, Low 等資訊給點火濾網使用
+        df_4h = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
         df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
         dist_pct = ((df_4h['Close'].iloc[-1] - df_4h['MA60'].iloc[-1]) / df_4h['MA60'].iloc[-1]) * 100
         if abs(dist_pct) > dist_threshold: return None
+        
+        # 【新增】動能點火濾網 (Ignition Filter)
+        if check_ignition:
+            # 確保有足夠的 K棒來比較
+            if len(df_4h) < 2: return None
+            
+            curr_close = df_4h['Close'].iloc[-1]
+            prev_high = df_4h['High'].iloc[-2] # 前一根的最高價
+            
+            # 邏輯：收盤價 突破 前一根最高價 (強勢吞噬/突破)
+            if curr_close <= prev_high: return None
         
         u_score = -abs(dist_pct)
         if enable_u_logic:
@@ -259,13 +272,11 @@ def get_ghost_metrics(symbol, vol_threshold):
                 u_score = (a * 1000) - (abs(dist_pct) * 0.5)
             if a < min_curvature: return None
             
-        # 財報日期
         earnings_date = "未知"
         cal = stock.calendar
         if cal is not None and 'Earnings Date' in cal:
             earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
 
-        # 【修改處】明確標示乖離率為 4H MA60
         return {
             "代號": symbol, 
             "HV Rank": round(hv_rank, 1), 
@@ -273,7 +284,7 @@ def get_ghost_metrics(symbol, vol_threshold):
             "預期變動$": f"±{round(move_dollar, 2)}", 
             "現價": round(cur_price, 2),
             "4H 60MA": round(df_4h['MA60'].iloc[-1], 2),
-            "4H MA60 乖離率": f"{round(dist_pct, 2)}%",  # 已更名
+            "4H MA60 乖離率": f"{round(dist_pct, 2)}%",  
             "產業": translate_industry(stock.info.get('industry', 'N/A')),
             "下次財報": earnings_date, 
             "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
