@@ -249,13 +249,18 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     
     with st.status("🔍 掃描中...", expanded=True) as status:
         tickers = get_tickers_robust(market_choice)[:scan_limit]
-        results = []; count = 0; total = len(tickers)
+        total_tickers = len(tickers)
+        
+        # 【修正處】加回顯示數量的代碼
+        status.write(f"✅ 已獲得 {total_tickers} 檔代號，開始技術面過濾...")
+        
+        results = []; count = 0
         progress = st.progress(0)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_ticker = {executor.submit(get_ghost_metrics, t, min_volume_threshold): t for t in tickers}
             for future in as_completed(future_to_ticker):
                 data = future.result(); count += 1
-                progress.progress(count / total if total > 0 else 0)
+                progress.progress(count / total_tickers if total_tickers > 0 else 0)
                 if data: results.append(data)
         st.session_state['scan_results'] = results
         status.update(label=f"完成！共 {len(results)} 檔。", state="complete", expanded=False)
@@ -289,7 +294,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         default_option = options[0]
         
         # 使用 Pills (膠囊) 元件
-        # selection_mode="single" 確保單選
         selected_pill = st.pills(
             "👉 請點擊標的 (不會跳出鍵盤)",
             options,
@@ -298,13 +302,12 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             key="pills_selector"
         )
         
-        # 繪圖邏輯：直接根據膠囊選到的文字來畫圖，不再使用 Index 轉換，解決同步問題
+        # 繪圖邏輯：直接根據膠囊選到的文字來畫圖
         if selected_pill:
             target = selected_pill.split(" - ")[0]
             st.caption(f"目前檢視: {target}")
             plot_interactive_chart(target)
         else:
-            # 防止使用者取消選取導致圖表消失
             st.info("請點選上方標籤以查看 K 線")
     else:
         st.write("查無符合條件標的")
