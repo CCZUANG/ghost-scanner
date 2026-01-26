@@ -153,9 +153,9 @@ if enable_box_breakout:
         if not auto_flag_mode:
             box_tightness = st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
         else:
-            box_tightness = 100 # 自動旗型下，寬度由邏輯控制
+            box_tightness = 100 
     else:
-        st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期")
+        st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期 (含趨勢濾網)")
         box_weeks = 52 
         auto_flag_mode = True 
         box_tightness = 100
@@ -232,9 +232,7 @@ def plot_interactive_chart(symbol):
                 
                 shapes = []
                 if enable_box_breakout:
-                    # 嘗試從 session_state 獲取該股票的偵測週數，若無則用預設
                     detected_weeks = box_weeks
-                    
                     last_n = df.iloc[-(detected_weeks+1):-1]
                     if len(last_n) > 0:
                         box_top = last_n['High'].max()
@@ -274,17 +272,14 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (數據源修復+雙重突破+期權OI+全自動VCP+趨勢位置防呆) ---
+# --- 6. 核心指標運算 (Final VCP Logic Fix) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
         
-        # 統一抓取日線資料 (2年)
         df_daily_2y = stock.history(period="2y", interval="1d")
-        
         if len(df_daily_2y) < 250: return None 
         
-        # 準備基礎數據
         log_ret = np.log(df_daily_2y['Close'] / df_daily_2y['Close'].shift(1))
         vol_30d = log_ret.rolling(30).std() * np.sqrt(252) * 100
         hv_rank_val = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
@@ -307,6 +302,13 @@ def get_ghost_metrics(symbol, vol_threshold):
             avg_vol = df_wk['Volume'].tail(10).mean()
             if avg_vol < vol_threshold * 2: return None 
             
+            # --- 趨勢濾網數據準備 (Minervini Trend Template) ---
+            # 1. 30週均線 (約150MA)
+            ma30_wk = df_wk['Close'].rolling(30).mean()
+            # 2. 52週高低點
+            year_low = df_wk['Low'].tail(52).min()
+            year_high = df_wk['High'].tail(52).max()
+            
             # --- 全自動 VCP 偵測核心 ---
             if enable_full_auto_vcp:
                 candidate_periods = [52, 40, 30, 20, 12]
@@ -320,6 +322,20 @@ def get_ghost_metrics(symbol, vol_threshold):
             
             current_week = df_wk.iloc[-1]
             
+            # 趨勢初步過濾 (如果開啟 VCP 自動偵測，則啟用嚴格趨勢檢查)
+            # 條件：股價必須 > 30週均線 (過濾掉空頭排列)
+            if (auto_flag_mode or enable_full_auto_vcp) and len(ma30_wk) > 0:
+                if current_week['Close'] < ma30_wk.iloc[-1]: return None
+            
+            # 條件：股價必須脫離 52週低點至少 25% (確認底部已過)
+            if (auto_flag_mode or enable_full_auto_vcp) and year_low > 0:
+                if current_week['Close'] < year_low * 1.25: return None
+                
+            # 條件：股價必須在 52週高點的 25% 範圍內 (確認強勢整理)
+            # 註：有些剛起漲的 VCP 可能離高點稍遠，這條可以視情況放寬，但標準 VCP 是要接近高點的
+            if (auto_flag_mode or enable_full_auto_vcp) and year_high > 0:
+                if current_week['Close'] < year_high * 0.75: return None
+
             for p in candidate_periods:
                 if len(df_wk) < p + 2: continue
                 
@@ -331,7 +347,6 @@ def get_ghost_metrics(symbol, vol_threshold):
                 
                 if box_low == 0: continue
                 
-                # 自動收斂檢查
                 if auto_flag_mode or enable_full_auto_vcp:
                     mid_point = len(box_data) // 2
                     part_old = box_data.iloc[:mid_point]
@@ -341,17 +356,12 @@ def get_ghost_metrics(symbol, vol_threshold):
                     range_recent = part_recent['High'].max() - part_recent['Low'].min()
                     
                     if range_old == 0: continue
-                    
-                    # 嚴格收斂條件：近期波動 < 前期波動 * 0.85
                     if range_recent > range_old * 0.85: continue 
                     
-                    # 【關鍵修正】位置檢查 (Position Filter)
-                    # 收盤價必須位於箱體的上半部 (至少高於箱底 50% 位置)
-                    # 避免選到 "下跌收斂" (Bear Flag)
-                    box_mid_price = box_low + (box_high - box_low) * 0.5
-                    if current_week['Close'] < box_mid_price: continue
+                    # 位置檢查：收盤價必須位於箱體上緣 (Box High 的 90% 以上)
+                    # 這能確保不是在箱底死魚，而是在準備突破
+                    if current_week['Close'] < box_high * 0.90: continue
 
-                    # 檢查是否接近箱頂 (突破準備)
                     if current_week['Close'] < box_high * 0.98: continue
                     
                     found_vcp = True
@@ -360,10 +370,8 @@ def get_ghost_metrics(symbol, vol_threshold):
                     final_box_amp = (range_recent / box_low) * 100 
                     break
                 else:
-                    # 手動模式
                     box_amplitude = (box_high - box_low) / box_low * 100
                     if box_amplitude > box_tightness: continue
-                    
                     if current_week['Close'] >= box_high * 0.99:
                         found_vcp = True
                         final_box_weeks = p
@@ -373,7 +381,6 @@ def get_ghost_metrics(symbol, vol_threshold):
             
             if not found_vcp: return None
             
-            # 補全 4H 數據
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -383,7 +390,7 @@ def get_ghost_metrics(symbol, vol_threshold):
                     dist_pct_val = ((df_4h['Close'].iloc[-1] - ma60_4h_val) / ma60_4h_val) * 100
             except: pass
 
-        # --- B. 原本的幽靈策略邏輯 ---
+        # --- B. 幽靈模式 (省略，邏輯同上) ---
         else:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) < 240: return None
