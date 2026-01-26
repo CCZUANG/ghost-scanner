@@ -218,32 +218,43 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 ---
-def plot_interactive_chart(symbol):
+# --- 5. 核心繪圖函數 (含期權牆) ---
+def plot_interactive_chart(symbol, call_wall, put_wall):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), dragmode=False)
     
+    # 準備期權牆線條 (如果有數值)
+    shapes = []
+    annotations = []
+    
+    # Call Wall (壓力/軋空點) - 紅色虛線
+    if call_wall and call_wall != "N/A":
+        try:
+            cw_price = float(call_wall)
+            shapes.append(dict(type="line", x0=0, x1=1, xref="paper", y0=cw_price, y1=cw_price, line=dict(color="rgba(255, 99, 71, 0.8)", width=2, dash="dash")))
+            annotations.append(dict(x=0.02, y=cw_price, xref="paper", yref="y", text=f"🔥 Call Wall (Max OI): {cw_price}", showarrow=False, font=dict(color="rgba(255, 99, 71, 1)"), bgcolor="rgba(255, 255, 255, 0.7)"))
+        except: pass
+
+    # Put Wall (支撐) - 綠色虛線
+    if put_wall and put_wall != "N/A":
+        try:
+            pw_price = float(put_wall)
+            shapes.append(dict(type="line", x0=0, x1=1, xref="paper", y0=pw_price, y1=pw_price, line=dict(color="rgba(60, 179, 113, 0.8)", width=2, dash="dash")))
+            annotations.append(dict(x=0.02, y=pw_price, xref="paper", yref="y", text=f"🛡️ Put Wall (Max OI): {pw_price}", showarrow=False, font=dict(color="rgba(60, 179, 113, 1)"), bgcolor="rgba(255, 255, 255, 0.7)"))
+        except: pass
+
     with tab1: # 周線
         try:
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                shapes = []
-                if enable_box_breakout:
-                    detected_weeks = box_weeks
-                    last_n = df.iloc[-(detected_weeks+1):-1]
-                    if len(last_n) > 0:
-                        box_top = last_n['High'].max()
-                        box_bottom = last_n['Low'].min()
-                        shapes.append(dict(type="rect", x0=last_n.index[0], y0=box_bottom, x1=last_n.index[-1], y1=box_top, line=dict(color="RoyalBlue"), fillcolor="LightSkyBlue", opacity=0.3))
-                
+                # 箱型 (如果是 box mode 且有資料) - 這裡簡化不畫箱子以免混亂，專注畫期權牆
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
                 
-                if shapes: fig.update_layout(shapes=shapes)
-                fig.update_layout(title=f"{symbol} 周線", **layout)
+                fig.update_layout(title=f"{symbol} 周線 (含期權牆)", shapes=shapes, annotations=annotations, **layout)
                 if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("周線載入失敗")
@@ -255,7 +266,7 @@ def plot_interactive_chart(symbol):
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
-                fig.update_layout(title=f"{symbol} 日線", **layout)
+                fig.update_layout(title=f"{symbol} 日線 (含期權牆)", shapes=shapes, annotations=annotations, **layout)
                 if len(df) > 200: fig.update_xaxes(range=[df.index[-200], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("日線載入失敗")
@@ -268,11 +279,11 @@ def plot_interactive_chart(symbol):
                 df['MA60'] = df['Close'].rolling(60).mean(); df['d_str'] = df.index.strftime('%m-%d %H:%M')
                 fig = go.Figure([go.Candlestick(x=df['d_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
                                  go.Scatter(x=df['d_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
-                fig.update_layout(title=f"{symbol} 4H", **layout)
+                fig.update_layout(title=f"{symbol} 4H (含期權牆)", shapes=shapes, annotations=annotations, **layout)
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (Final VCP Logic Fix) ---
+# --- 6. 核心指標運算 ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
@@ -287,29 +298,20 @@ def get_ghost_metrics(symbol, vol_threshold):
         ma60_4h_val = 0
         dist_pct_val = 0
         
-        # --- A. 霸道模式：箱型突破邏輯 ---
+        # --- A. 霸道模式 ---
         if enable_box_breakout:
-            df_wk = df_daily_2y.resample('W').agg({
-                'Open': 'first', 
-                'High': 'max', 
-                'Low': 'min', 
-                'Close': 'last', 
-                'Volume': 'sum'
-            }).dropna()
+            df_wk = df_daily_2y.resample('W').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
             
             if len(df_wk) < 15: return None
             
             avg_vol = df_wk['Volume'].tail(10).mean()
             if avg_vol < vol_threshold * 2: return None 
             
-            # --- 趨勢濾網數據準備 (Minervini Trend Template) ---
-            # 1. 30週均線 (約150MA)
+            # Trend Template Data
             ma30_wk = df_wk['Close'].rolling(30).mean()
-            # 2. 52週高低點
             year_low = df_wk['Low'].tail(52).min()
             year_high = df_wk['High'].tail(52).max()
             
-            # --- 全自動 VCP 偵測核心 ---
             if enable_full_auto_vcp:
                 candidate_periods = [52, 40, 30, 20, 12]
             else:
@@ -319,20 +321,13 @@ def get_ghost_metrics(symbol, vol_threshold):
             final_box_weeks = 0
             final_box_high = 0
             final_box_amp = 0
-            
             current_week = df_wk.iloc[-1]
             
-            # 趨勢初步過濾 (如果開啟 VCP 自動偵測，則啟用嚴格趨勢檢查)
-            # 條件：股價必須 > 30週均線 (過濾掉空頭排列)
+            # 趨勢濾網
             if (auto_flag_mode or enable_full_auto_vcp) and len(ma30_wk) > 0:
                 if current_week['Close'] < ma30_wk.iloc[-1]: return None
-            
-            # 條件：股價必須脫離 52週低點至少 25% (確認底部已過)
             if (auto_flag_mode or enable_full_auto_vcp) and year_low > 0:
                 if current_week['Close'] < year_low * 1.25: return None
-                
-            # 條件：股價必須在 52週高點的 25% 範圍內 (確認強勢整理)
-            # 註：有些剛起漲的 VCP 可能離高點稍遠，這條可以視情況放寬，但標準 VCP 是要接近高點的
             if (auto_flag_mode or enable_full_auto_vcp) and year_high > 0:
                 if current_week['Close'] < year_high * 0.75: return None
 
@@ -358,10 +353,8 @@ def get_ghost_metrics(symbol, vol_threshold):
                     if range_old == 0: continue
                     if range_recent > range_old * 0.85: continue 
                     
-                    # 位置檢查：收盤價必須位於箱體上緣 (Box High 的 90% 以上)
-                    # 這能確保不是在箱底死魚，而是在準備突破
-                    if current_week['Close'] < box_high * 0.90: continue
-
+                    box_mid_price = box_low + (box_high - box_low) * 0.5
+                    if current_week['Close'] < box_mid_price: continue
                     if current_week['Close'] < box_high * 0.98: continue
                     
                     found_vcp = True
@@ -390,7 +383,7 @@ def get_ghost_metrics(symbol, vol_threshold):
                     dist_pct_val = ((df_4h['Close'].iloc[-1] - ma60_4h_val) / ma60_4h_val) * 100
             except: pass
 
-        # --- B. 幽靈模式 (省略，邏輯同上) ---
+        # --- B. 幽靈模式 ---
         else:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) < 240: return None
@@ -455,6 +448,7 @@ def get_ghost_metrics(symbol, vol_threshold):
         near_put_max = "N/A"
         all_call_max = "N/A"
         all_put_max = "N/A"
+        total_atm_oi_val = 0 # 用於過濾
         
         try:
             opts = stock.options
@@ -466,7 +460,8 @@ def get_ghost_metrics(symbol, vol_threshold):
                 atm_strike = chain_near.calls.loc[closest_idx, 'strike']
                 c_oi = chain_near.calls[chain_near.calls['strike'] == atm_strike]['openInterest'].sum()
                 p_oi = chain_near.puts[chain_near.puts['strike'] == atm_strike]['openInterest'].sum()
-                atm_oi_display = f"{int(c_oi + p_oi):,}"
+                total_atm_oi_val = c_oi + p_oi
+                atm_oi_display = f"{int(total_atm_oi_val):,}"
                 
                 if not chain_near.calls.empty:
                     near_call_max = chain_near.calls.loc[chain_near.calls['openInterest'].idxmax(), 'strike']
@@ -490,6 +485,9 @@ def get_ghost_metrics(symbol, vol_threshold):
                                 all_put_max = p_max_row['strike']
                     except: continue
         except: pass
+
+        # 【新增過濾】價平 OI 小於 2000 直接剔除
+        if total_atm_oi_val < 2000: return None
 
         earnings_date = "未知"
         cal = stock.calendar
@@ -607,8 +605,17 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         
         if selected_pill:
             target = selected_pill.split(" - ")[0]
+            
+            # 從結果中找回 Call/Put Wall 數據
+            row_data = df[df['代號'] == target]
+            if not row_data.empty:
+                call_wall = row_data.iloc[0]['全Call大量'] 
+                put_wall = row_data.iloc[0]['全Put大量']
+            else:
+                call_wall = "N/A"; put_wall = "N/A"
+            
             st.caption(f"目前檢視: {target}")
-            plot_interactive_chart(target)
+            plot_interactive_chart(target, call_wall, put_wall)
         else:
             st.info("請點選上方標籤以查看 K 線")
     else:
