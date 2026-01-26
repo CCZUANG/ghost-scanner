@@ -337,10 +337,9 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
 
     st.subheader("📋 幽靈策略篩選列表")
-    st.info("👆 **直接點擊下方表格的「第一欄」來選擇要查看 K 線的股票** (手機不會跳出鍵盤)")
-
-    # 【修改處】啟用表格選取模式 (single-row)
-    event = st.dataframe(
+    
+    # 表格區維持不變，僅供連結跳轉
+    st.dataframe(
         df_display,
         column_config={
             "代號": st.column_config.LinkColumn(
@@ -351,29 +350,38 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             "_sort_score": None
         },
         hide_index=True,
-        use_container_width=True,
-        on_select="rerun",           # 點選後重新執行以更新圖表
-        selection_mode="single-row"  # 限制只能單選
+        use_container_width=True
     )
     
     st.markdown("---")
     st.subheader("🕯️ 三週期 K 線檢視")
+
+    # --- 【修改處】無鍵盤下拉選單模擬器 ---
+    # 準備選項清單
+    options = df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist()
     
-    # 【邏輯修改】根據表格的「選取結果」來決定畫哪一張圖
-    target_symbol = None
-    
-    # 檢查是否有選取任何一行
-    if len(event.selection.rows) > 0:
-        selected_index = event.selection.rows[0]
-        # 從「原始 df」中獲取純代號 (因為 df_display 的代號是網址)
-        target_symbol = df.iloc[selected_index]["代號"]
-        st.success(f"目前檢視: {target_symbol}")
-    else:
-        # 如果沒選，預設顯示第一筆 (如果有的話)
-        if not df.empty:
-            target_symbol = df.iloc[0]["代號"]
-            st.caption(f"預設顯示列表首位: {target_symbol} (請點擊表格切換)")
-    
-    # 執行繪圖
-    if target_symbol:
-        plot_interactive_chart(target_symbol)
+    # 如果還沒有選擇，預設選第一個
+    if 'selected_stock_idx' not in st.session_state:
+        st.session_state.selected_stock_idx = 0
+
+    # 顯示目前選到的股票，讓使用者知道現在看的是哪一支
+    current_label = options[st.session_state.selected_stock_idx] if options else "無資料"
+
+    # 使用 Expander (摺疊選單) 包裹 Radio (單選鈕)
+    # 優點：不佔空間、點擊展開、純點選操作、絕對不會跳鍵盤
+    with st.expander(f"🔽 點擊切換股票 (目前: {current_label.split(' - ')[0]})", expanded=False):
+        selected = st.radio(
+            "請點選標的：", 
+            options, 
+            index=st.session_state.selected_stock_idx,
+            key="stock_radio_selection",
+            label_visibility="collapsed" # 隱藏標題，讓介面更乾淨
+        )
+        
+        # 更新 session state 的 index，保持同步
+        if selected in options:
+            st.session_state.selected_stock_idx = options.index(selected)
+
+    # 繪圖邏輯
+    if selected:
+        plot_interactive_chart(selected.split(" - ")[0])
