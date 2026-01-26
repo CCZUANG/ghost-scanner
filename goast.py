@@ -60,12 +60,60 @@ def sync_logic_state():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 ---
+# --- 2. 核心策略導引區 (詳細版回歸) ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
-    col1, col2, col3 = st.columns(3)
-    with col1: st.markdown("### Step 1: 試探部位\n買低 Call + 賣高 Call (多頭價差)。")
-    with col2: st.markdown("### Step 2: 動能加碼\n浮盈且 IV 擴張時，加買更高階 Call。")
-    with col3: st.markdown("### Step 3: 轉化蝴蝶\n過熱時賣出中間價位 Call，鎖定負成本。")
+    col_step1, col_step2, col_step3 = st.columns(3)
+    
+    with col_step1:
+        st.markdown("### 第一步：建立試探部位 (Rule 1)")
+        st.markdown("""
+        **🚀 啟動時機**
+        放量突破關鍵壓力或回測支撐成功時。
+
+        **動作**
+        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
+
+        **成功指標**
+        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
+
+        **❌ 失敗判定**
+        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
+        """)
+        
+    with col_step2:
+        st.markdown("### 第二步：動能加碼 (Rule 2)")
+        st.markdown("""
+        **🚀 啟動時機**
+        當價差已產生「浮盈」，且股價衝向賣出價位時。
+
+        **動作**
+        加買 **更高一階的 Call**。
+
+        **成功指標**
+        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
+
+        **❌ 失敗判定**
+        動能衰竭或 IV 下降（冰塊融化）。
+        """)
+        
+    with col_step3:
+        st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
+        st.markdown("""
+        **🚀 啟動時機**
+        股價強勢漲破加碼價，且市場出現過熱訊號時。
+
+        **動作**
+        **再加賣一張中間價位的 Call** (總計賣出兩張)。
+
+        **成功指標**
+        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
+
+        **❌ 失敗判定**
+        爆量不漲或價格遠超最高階。
+        """)
+
+    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
+
 st.markdown("---")
 
 # --- 3. 側邊欄 ---
@@ -73,7 +121,6 @@ st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
-# settings 字典，解決變數傳遞問題
 settings = {}
 
 st.sidebar.header("📦 箱型突破 (霸道模式)")
@@ -87,14 +134,12 @@ if enable_box_breakout:
     if not enable_full_auto_vcp:
         box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20)
         settings['box_weeks'] = box_weeks
-        
         auto_flag_mode = st.sidebar.checkbox("🤖 自動偵測旗型收斂", value=True)
         settings['auto_flag_mode'] = auto_flag_mode
-        
         settings['box_tightness'] = 100 if auto_flag_mode else st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
     else:
         st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期")
-        settings['box_weeks'] = 52 # 預設最大值
+        settings['box_weeks'] = 52 
         settings['auto_flag_mode'] = True
         settings['box_tightness'] = 100
 else:
@@ -145,34 +190,30 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (修復 NameError + VCP Box + 標籤) ---
+# --- 5. 繪圖函數 (完美標籤+VCP Box) ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
     stock = yf.Ticker(symbol)
-    
-    # 這裡定義 st.tabs，確保 tab1 存在！
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
-    
-    # r=120 提供足夠右側空間給標籤
-    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=120, t=30, b=30), legend=dict(orientation="h", y=-0.1, x=0.5), dragmode=False)
+    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=130, t=30, b=30), legend=dict(orientation="h", y=-0.1, x=0.5), dragmode=False)
     
     box_shapes = []
     is_box_mode = st.session_state.get('box_mode_key', False)
     
-    # 準備期權牆線條與標籤
     def get_wall_shapes_annotations(cw, pw):
         sh, an = [], []
         if cw and cw != "N/A":
             try:
                 p = float(cw)
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#FF6347", width=1, dash="dash")))
-                # x=1.01 放在圖表右側外緣
-                an.append(dict(xref="paper", x=1.01, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="left", yanchor="bottom", font=dict(color="#FF6347", size=11)))
+                # yshift=10 向上
+                an.append(dict(xref="paper", x=1.01, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="left", yanchor="bottom", yshift=10, font=dict(color="#FF6347", size=12)))
             except: pass
         if pw and pw != "N/A":
             try:
                 p = float(pw)
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#3CB371", width=1, dash="dash")))
-                an.append(dict(xref="paper", x=1.01, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", font=dict(color="#3CB371", size=11)))
+                # yshift=-10 向下
+                an.append(dict(xref="paper", x=1.01, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", yshift=-10, font=dict(color="#3CB371", size=12)))
             except: pass
         return sh, an
 
@@ -184,8 +225,8 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                # 繪製 VCP 藍色區塊 (只要 vcp_weeks > 0 就畫)
-                if vcp_weeks and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
+                # VCP 區塊
+                if is_box_mode and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
                     last_n = df.iloc[-(vcp_weeks+1):-1]
                     if len(last_n) > 0:
                         box_shapes.append(dict(
@@ -195,7 +236,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
                             x1=last_n.index[-1], 
                             y1=last_n['High'].max(), 
                             line=dict(width=0), 
-                            fillcolor="rgba(30, 144, 255, 0.15)" # 淺藍透明
+                            fillcolor="rgba(30, 144, 255, 0.25)"
                         ))
 
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
@@ -244,7 +285,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
         ma60_4h_val, dist_pct_val = 0, 0
         final_box_weeks = 0 
 
-        # --- A. 霸道模式 (箱型) ---
+        # --- A. 霸道模式 ---
         if s['enable_box_breakout']:
             df_wk = df_daily_2y.resample('W').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
             if len(df_wk) < 15: return None
@@ -265,23 +306,24 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                 box_low = box_data['Low'].min()
                 if box_low == 0: continue
                 
+                # 自動收斂
                 if s['auto_flag_mode'] or s['enable_full_auto_vcp']:
                     mid = len(box_data)//2
                     old_r = box_data.iloc[:mid]['High'].max() - box_data.iloc[:mid]['Low'].min()
                     new_r = box_data.iloc[mid:]['High'].max() - box_data.iloc[mid:]['Low'].min()
                     
                     if old_r == 0: continue
-                    if new_r > old_r * 0.85: continue # 波動未收縮
+                    if new_r > old_r * 0.85: continue 
                     
-                    if current_week['Close'] < box_high * 0.90: continue # 必須在箱體上緣
-                    if current_week['Close'] < box_high * 0.98: continue # 準備突破
+                    if current_week['Close'] < box_high * 0.90: continue 
+                    if current_week['Close'] < box_high * 0.98: continue 
                     
                     found_vcp = True
                     final_box_weeks = p
                     box_str = f"突破 {round(box_high, 2)}"
                     box_amp_str = f"VCP{p}W"
                     break
-                else: # 手動寬度
+                else: 
                     amp = (box_high - box_low) / box_low * 100
                     if amp > s['box_tightness']: continue
                     if current_week['Close'] >= box_high * 0.99:
@@ -293,7 +335,6 @@ def get_ghost_metrics(symbol, vol_threshold, s):
             
             if not found_vcp: return None
             
-            # 補 4H 數據
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -303,7 +344,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                     dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
             except: pass
 
-        # --- B. 幽靈模式 (非霸道) ---
+        # --- B. 幽靈模式 ---
         else:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) < 240: return None
@@ -346,7 +387,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
             box_str = f"±{round(df_daily_2y['Close'].iloc[-1]*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
 
-        # --- 期權與回傳 ---
+        # --- 期權 ---
         atm_oi = "N/A"; c_max = "N/A"; p_max = "N/A"; tot_oi = 0
         try:
             opts = stock.options
