@@ -50,32 +50,23 @@ def handle_spoon_toggle():
         st.session_state.u_sensitivity = 240
 
 def sync_logic_state():
-    """
-    【總控函數】解決 箱型模式 vs 週線點火 的連動衝突
-    無論切換哪個開關，都由這裡統一判斷乖離率該是多少。
-    """
-    # 讀取目前狀態
+    """總控函數：解決模式連動衝突"""
     is_box_active = st.session_state.get('box_mode_key', False)
     ignition_mode = st.session_state.get('ignition_mode_key', "🚫 不啟用")
     
-    # 如果正在使用箱型模式，我們暫時不動乖離率 (因為箱型模式不看乖離率)
-    # 但一旦箱型模式 "關閉" (is_box_active == False)，我們就要檢查點火狀態
     if not is_box_active:
         if "週線點火" in ignition_mode:
-            # 如果不是 50，先備份使用者的設定，然後拉到最大
             if st.session_state.dist_threshold < 50.0:
                 st.session_state.backup['dist_threshold'] = st.session_state.dist_threshold
                 st.session_state.dist_threshold = 50.0
         else:
-            # 如果沒開週線點火，且目前是 50 (代表是被自動設定的)，則還原
             if st.session_state.dist_threshold == 50.0:
-                # 從備份還原，若無備份則預設 8.0
                 st.session_state.dist_threshold = st.session_state.backup.get('dist_threshold', 8.0)
 
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (完整詳細版回歸) ---
+# --- 2. 核心策略導引區 (完整版) ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
     
@@ -141,16 +132,17 @@ enable_box_breakout = st.sidebar.checkbox(
     "✅ 啟動週線橫盤突破 (忽略其他條件)", 
     value=False, 
     key='box_mode_key',
-    on_change=sync_logic_state, # 設定連動
+    on_change=sync_logic_state,
     help="啟動此濾網時，將忽略下方的 MA60、乖離率、U型等所有設定，只篩選「盤整突破」的股票。"
 )
 
 if enable_box_breakout:
     st.sidebar.warning("⚠️ 霸道模式已啟動：下方其他濾網已暫時失效。")
-    box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 30, 10, help="股票必須在過去 N 週內橫向整理")
+    # 【修改處】最大值改為 52，預設值改為 52
+    box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 52, help="股票必須在過去 N 週內橫向整理")
     box_tightness = st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25, help="數值越小代表盤整越緊密 (壓縮越極致)")
 else:
-    box_weeks = 10
+    box_weeks = 52
     box_tightness = 25
 
 st.sidebar.divider()
@@ -178,7 +170,7 @@ ignition_mode = st.sidebar.radio(
     ["🚫 不啟用 (左側佈局)", "⚡ 4H 點火 (短線突破前高)", "🚀 週線點火 (大波段過上週高)"],
     index=0,
     key="ignition_mode_key",
-    on_change=sync_logic_state # 設定連動，無論是切換箱型還是點火，都跑同一個邏輯檢查
+    on_change=sync_logic_state 
 )
 
 st.sidebar.header("⚙️ 基礎篩選")
@@ -220,7 +212,6 @@ def plot_interactive_chart(symbol):
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                # 若開啟箱型模式，畫出箱型
                 shapes = []
                 if enable_box_breakout:
                     last_n = df.iloc[-(box_weeks+1):-1]
@@ -262,7 +253,7 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (霸道模式整合) ---
+# --- 6. 核心指標運算 (修復 N/A 問題) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
@@ -285,8 +276,32 @@ def get_ghost_metrics(symbol, vol_threshold):
             box_amplitude = (box_high - box_low) / box_low * 100
             if box_amplitude > box_tightness: return None
             
+            # 必須突破
             if current_week['Close'] <= box_high: return None
             
+            # 【修復處】突破後，額外計算 HV Rank 與 4H 乖離率
+            hv_rank_val = 0
+            ma60_4h_val = 0
+            dist_pct_val = 0
+            
+            try:
+                # 這裡額外抓取 1y 小時資料來計算精確指標
+                df_1h = stock.history(period="1y", interval="1h")
+                if len(df_1h) > 200:
+                    # 算 HV Rank
+                    df_daily = df_1h.resample('D').agg({'Close': 'last'}).dropna()
+                    log_ret = np.log(df_daily['Close'] / df_daily['Close'].shift(1))
+                    vol_30d = log_ret.rolling(30).std() * np.sqrt(252) * 100
+                    hv_rank_val = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
+                    
+                    # 算 4H 數據
+                    df_4h = df_1h.resample('4h').agg({'Close': 'last'}).dropna()
+                    df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
+                    ma60_4h_val = df_4h['MA60'].iloc[-1]
+                    dist_pct_val = ((df_4h['Close'].iloc[-1] - ma60_4h_val) / ma60_4h_val) * 100
+            except:
+                pass # 計算失敗就維持 0
+
             earnings_date = "未知"
             cal = stock.calendar
             if cal is not None and 'Earnings Date' in cal:
@@ -294,12 +309,12 @@ def get_ghost_metrics(symbol, vol_threshold):
                 
             return {
                 "代號": symbol, 
-                "HV Rank": "N/A", 
+                "HV Rank": round(hv_rank_val, 1), # 填入真實計算值
                 "週波動%": round(box_amplitude, 2), 
                 "預期變動$": f"箱頂 {round(box_high, 2)}",
                 "現價": round(current_week['Close'], 2),
-                "4H 60MA": "N/A",
-                "4H MA60 乖離率": "突破中", 
+                "4H 60MA": round(ma60_4h_val, 2), # 填入真實計算值
+                "4H MA60 乖離率": f"{round(dist_pct_val, 2)}%", # 填入真實計算值
                 "產業": translate_industry(stock.info.get('industry', 'N/A')),
                 "下次財報": earnings_date, 
                 "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
@@ -435,7 +450,8 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"完成！共 {len(results)} 檔。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False)
+    # 【修改處】預設使用 HV Rank 排序 (由小到大)
+    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank", ascending=True)
     
     df_display = df.copy()
     df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
