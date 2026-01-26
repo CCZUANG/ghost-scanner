@@ -83,10 +83,10 @@ if enable_u_logic:
 
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
-# --- 【更新】趨勢濾網 (修正為週線邏輯) ---
+# --- 趨勢濾網 (週線 MA60) ---
 st.sidebar.header("🛡️ 趨勢濾網")
 check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上 (昨日<今日)", value=True)
-# 修改選項標籤，明確指出是「週線」
+# 確保是週線邏輯
 check_ma60_strong_trend = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢 (連續5週上升)", value=True, help="強制篩選出「週線」MA60 呈現穩定上升曲線的股票 (如 CCL)")
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
 
@@ -159,7 +159,7 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (含週線 MA60 邏輯) ---
+# --- 6. 核心指標運算 (含週線 MA60) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol); 
@@ -175,16 +175,14 @@ def get_ghost_metrics(symbol, vol_threshold):
         if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
         if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
         
-        # 【修改處】週線 MA60 強勢趨勢過濾 (連續 5 週上升)
+        # 週線 MA60 強勢趨勢過濾
         if check_ma60_strong_trend:
-            # 額外抓取 2年週線資料 (因為1年小時資料不足以計算長週期的週線 MA60)
             df_wk = stock.history(period="2y", interval="1wk")
-            if len(df_wk) > 65: # 確保資料足夠
+            if len(df_wk) > 65:
                 df_wk['MA60'] = df_wk['Close'].rolling(60).mean()
-                # 檢查最後 5 週 MA60 是否呈現嚴格遞增
                 if not df_wk['MA60'].tail(5).is_monotonic_increasing: return None
             else:
-                return None # 資料不足視為不通過
+                return None
 
         # 4. 價格與波動率檢查
         if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
@@ -194,7 +192,7 @@ def get_ghost_metrics(symbol, vol_threshold):
         hv_rank = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
         if hv_rank > hv_threshold: return None
         
-        # 5. 乖離率與 U 型 (使用 4H 資料)
+        # 5. 乖離率與 U 型
         df_4h = df_1h.resample('4h').agg({'Close': 'last'}).dropna()
         df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
         dist_pct = ((df_4h['Close'].iloc[-1] - df_4h['MA60'].iloc[-1]) / df_4h['MA60'].iloc[-1]) * 100
@@ -230,12 +228,12 @@ def get_ghost_metrics(symbol, vol_threshold):
 def get_tickers_robust(choice):
     headers = {"User-Agent": "Mozilla/5.0"}
     tickers = []
-    try: # S&P 500
+    try: 
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
         df = pd.read_html(StringIO(requests.get(url, headers=headers).text))[0]
         tickers.extend(df[df.columns[0]].tolist())
     except: pass
-    try: # Nasdaq 100
+    try: 
         url = "https://en.wikipedia.org/wiki/Nasdaq-100"
         dfs = pd.read_html(StringIO(requests.get(url, headers=headers).text))
         for df in dfs:
@@ -280,33 +278,33 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     )
     
     st.markdown("---")
-    
-    # --- 【無鍵盤選股區】使用 Expander + Radio 解決手機鍵盤問題 ---
-    options = df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist()
-    
-    if 'selected_idx' not in st.session_state: st.session_state.selected_idx = 0
-    
-    # 取得目前顯示的股票標籤
-    current_label = options[st.session_state.selected_idx] if options and st.session_state.selected_idx < len(options) else "無資料"
-    
     st.subheader("🕯️ 三週期 K 線檢視")
     
-    # 使用 Expander 包裹 Radio，模擬下拉選單但無鍵盤
-    with st.expander(f"🔽 點擊切換股票 (目前: {current_label.split(' - ')[0]})", expanded=False):
-        if options:
-            selected_opt = st.radio(
-                "請直接點選 (不會跳出鍵盤):", 
-                options, 
-                index=st.session_state.selected_idx,
-                key="stock_radio"
-            )
-            # 更新索引
-            if selected_opt in options:
-                st.session_state.selected_idx = options.index(selected_opt)
-        else:
-            st.write("查無符合條件標的")
+    # --- 【膠囊選單區 (st.pills)】 ---
+    # 美觀、不跳鍵盤、不需依賴 Index 避免 Bug
+    options = df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist()
 
-    # 繪圖
     if options:
-        target = options[st.session_state.selected_idx].split(" - ")[0]
-        plot_interactive_chart(target)
+        # 預設選擇第一個
+        default_option = options[0]
+        
+        # 使用 Pills (膠囊) 元件
+        # selection_mode="single" 確保單選
+        selected_pill = st.pills(
+            "👉 請點擊標的 (不會跳出鍵盤)",
+            options,
+            default=default_option,
+            selection_mode="single",
+            key="pills_selector"
+        )
+        
+        # 繪圖邏輯：直接根據膠囊選到的文字來畫圖，不再使用 Index 轉換，解決同步問題
+        if selected_pill:
+            target = selected_pill.split(" - ")[0]
+            st.caption(f"目前檢視: {target}")
+            plot_interactive_chart(target)
+        else:
+            # 防止使用者取消選取導致圖表消失
+            st.info("請點選上方標籤以查看 K 線")
+    else:
+        st.write("查無符合條件標的")
