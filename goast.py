@@ -68,48 +68,70 @@ with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳�
     with col3: st.markdown("### Step 3: 轉化蝴蝶\n過熱時賣出中間價位 Call，鎖定負成本。")
 st.markdown("---")
 
-# --- 3. 側邊欄 ---
+# --- 3. 側邊欄 (設定收集) ---
 st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
+# 建立 settings 字典，解決 Thread 變數抓不到的問題
+settings = {}
+
 st.sidebar.header("📦 箱型突破 (霸道模式)")
 enable_box_breakout = st.sidebar.checkbox("✅ 啟動週線橫盤突破 (忽略其他條件)", value=False, key='box_mode_key', on_change=sync_logic_state)
+settings['enable_box_breakout'] = enable_box_breakout
 
 if enable_box_breakout:
     enable_full_auto_vcp = st.sidebar.checkbox("🤯 全自動 VCP 偵測 (免設定週數)", value=True)
+    settings['enable_full_auto_vcp'] = enable_full_auto_vcp
+    
     if not enable_full_auto_vcp:
-        box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20)
-        auto_flag_mode = st.sidebar.checkbox("🤖 自動偵測旗型收斂", value=True)
-        box_tightness = 100 if auto_flag_mode else st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
+        settings['box_weeks'] = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20)
+        settings['auto_flag_mode'] = st.sidebar.checkbox("🤖 自動偵測旗型收斂", value=True)
+        settings['box_tightness'] = 100 if settings['auto_flag_mode'] else st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
     else:
         st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期")
-        box_weeks = 52; auto_flag_mode = True; box_tightness = 100
+        settings['box_weeks'] = 52
+        settings['auto_flag_mode'] = True
+        settings['box_tightness'] = 100
 else:
-    enable_full_auto_vcp = False; box_weeks = 52; auto_flag_mode = False; box_tightness = 25
+    # 預設值 (Ghost Mode 用不到，但為了防止 Key Error)
+    settings['enable_full_auto_vcp'] = False
+    settings['box_weeks'] = 52
+    settings['auto_flag_mode'] = False
+    settings['box_tightness'] = 25
 
 st.sidebar.divider()
 st.sidebar.header("📈 幽靈戰法連動")
 enable_u_logic = st.sidebar.checkbox("✅ 啟動 4小時 U型戰法", value=False, key='u_logic_key', on_change=handle_u_logic_toggle)
+settings['enable_u_logic'] = enable_u_logic
+
 if enable_u_logic:
     st.sidebar.checkbox("🥄 嚴格勺子模式", value=True, key='spoon_strict_key', on_change=handle_spoon_toggle)
-    spoon_vertex_range = st.sidebar.slider("🥄 勺子底部位置 (%)", 0, 100, (50, 95), 5)
-else: spoon_vertex_range = (50, 95)
+    settings['spoon_strict'] = st.session_state.spoon_strict_key
+    settings['spoon_vertex_range'] = st.sidebar.slider("🥄 勺子底部位置 (%)", 0, 100, (50, 95), 5)
+else: 
+    settings['spoon_strict'] = False
+    settings['spoon_vertex_range'] = (50, 95)
 
 st.sidebar.header("🛡️ 趨勢與點火")
-check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上", value=True)
-check_ma60_strong_trend = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢", value=True)
-check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
+settings['check_daily_ma60_up'] = st.sidebar.checkbox("✅ 日線 60MA 向上", value=True)
+settings['check_ma60_strong_trend'] = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢", value=True)
+settings['check_price_above_daily_ma60'] = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
 ignition_mode = st.sidebar.radio("動能點火週期:", ["🚫 不啟用", "⚡ 4H 點火", "🚀 週線點火"], index=0, key="ignition_mode_key", on_change=sync_logic_state)
+settings['ignition_mode'] = ignition_mode
 
 st.sidebar.header("⚙️ 基礎篩選")
-hv_threshold = st.sidebar.slider("HV Rank 門檻", 10, 100, 30)
+settings['hv_threshold'] = st.sidebar.slider("HV Rank 門檻", 10, 100, 30)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
 dist_threshold = st.sidebar.slider("距離 4H MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
+settings['dist_threshold'] = dist_threshold
+
 if enable_u_logic:
-    u_sensitivity = st.sidebar.slider("U型敏感度", 20, 240, key='u_sensitivity')
-    min_curvature = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
-else: u_sensitivity = 30; min_curvature = 0.003
+    settings['u_sensitivity'] = st.sidebar.slider("U型敏感度", 20, 240, key='u_sensitivity')
+    settings['min_curvature'] = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
+else: 
+    settings['u_sensitivity'] = 30
+    settings['min_curvature'] = 0.003
 max_workers = st.sidebar.slider("🚀 平行核心數", 1, 32, 16)
 
 # --- 4. 產業翻譯 ---
@@ -120,14 +142,13 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (UI 修復版) ---
+# --- 5. 繪圖函數 (修正版) ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
     stock = yf.Ticker(symbol)
-    # 增加右側 Margin (r=150) 以容納標籤
-    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=150, t=30, b=30), legend=dict(orientation="h", y=-0.1, x=0.5), dragmode=False)
+    # 【關鍵修正】大幅增加右側 Margin (r=180) 以容納標籤
+    layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=180, t=30, b=30), legend=dict(orientation="h", y=-0.1, x=0.5), dragmode=False)
     
     box_shapes = []
-    is_box_mode = st.session_state.get('box_mode_key', False)
     
     # 準備期權牆線條與標籤
     def get_wall_shapes_annotations(cw, pw):
@@ -136,7 +157,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
             try:
                 p = float(cw)
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#FF6347", width=1, dash="dash")))
-                # x=1.02 代表在圖表右側外面一點點
+                # x=1.02, align right
                 an.append(dict(xref="paper", x=1.02, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="left", yanchor="bottom", font=dict(color="#FF6347", size=12)))
             except: pass
         if pw and pw != "N/A":
@@ -155,16 +176,10 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                # VCP 箱型繪製
-                if is_box_mode and vcp_weeks > 0:
-                    # 確保資料足夠，從倒數第二根往前推
+                # 【關鍵修正】強制繪製藍色區塊 (只要 vcp_weeks > 0 就畫，不依賴 is_box_mode)
+                if vcp_weeks and vcp_weeks > 0:
                     if len(df) >= vcp_weeks + 1:
-                        # 區間：不含本週的過去 N 週
-                        # idx_end = -2 (上週), idx_start = -(vcp_weeks + 1)
-                        # 注意：iloc切片是 [start : end(不含)]
-                        # 所以要取到 -1 (本週前)
                         last_n = df.iloc[-(vcp_weeks+1):-1]
-                        
                         if len(last_n) > 0:
                             box_shapes.append(dict(
                                 type="rect", 
@@ -173,7 +188,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
                                 x1=last_n.index[-1], 
                                 y1=last_n['High'].max(), 
                                 line=dict(width=0), 
-                                fillcolor="rgba(30, 144, 255, 0.2)" # 藍色透明
+                                fillcolor="rgba(30, 144, 255, 0.15)"
                             ))
 
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
@@ -209,8 +224,8 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心運算 ---
-def get_ghost_metrics(symbol, vol_threshold):
+# --- 6. 核心運算 (接收 settings 字典) ---
+def get_ghost_metrics(symbol, vol_threshold, s): # s = settings
     try:
         stock = yf.Ticker(symbol)
         df_daily_2y = stock.history(period="2y", interval="1d")
@@ -223,18 +238,16 @@ def get_ghost_metrics(symbol, vol_threshold):
         final_box_weeks = 0 
 
         # --- A. 霸道模式 (箱型) ---
-        if enable_box_breakout:
+        if s['enable_box_breakout']:
             df_wk = df_daily_2y.resample('W').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
             if len(df_wk) < 15: return None
             
-            # 移除 MA30 強制濾網
-            # ma30_wk = df_wk['Close'].rolling(30).mean()
-            # if len(ma30_wk) > 0 and df_wk['Close'].iloc[-1] < ma30_wk.iloc[-1]: return None
-
+            # (移除強制趨勢濾網，保留給使用者判斷)
+            
             avg_vol = df_wk['Volume'].tail(10).mean()
             if avg_vol < vol_threshold * 2: return None
             
-            candidate_periods = [52, 40, 30, 20, 12] if enable_full_auto_vcp else [box_weeks]
+            candidate_periods = [52, 40, 30, 20, 12] if s['enable_full_auto_vcp'] else [s['box_weeks']]
             found_vcp = False
             box_str = ""; box_amp_str = ""
             
@@ -248,7 +261,7 @@ def get_ghost_metrics(symbol, vol_threshold):
                 if box_low == 0: continue
                 
                 # 自動收斂 (Auto VCP)
-                if auto_flag_mode or enable_full_auto_vcp:
+                if s['auto_flag_mode'] or s['enable_full_auto_vcp']:
                     mid = len(box_data)//2
                     old_r = box_data.iloc[:mid]['High'].max() - box_data.iloc[:mid]['Low'].min()
                     new_r = box_data.iloc[mid:]['High'].max() - box_data.iloc[mid:]['Low'].min()
@@ -266,7 +279,7 @@ def get_ghost_metrics(symbol, vol_threshold):
                     break
                 else: # 手動寬度
                     amp = (box_high - box_low) / box_low * 100
-                    if amp > box_tightness: continue
+                    if amp > s['box_tightness']: continue
                     if current_week['Close'] >= box_high * 0.99:
                         found_vcp = True
                         final_box_weeks = p
@@ -276,7 +289,6 @@ def get_ghost_metrics(symbol, vol_threshold):
             
             if not found_vcp: return None
             
-            # 補 4H 數據
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -293,18 +305,17 @@ def get_ghost_metrics(symbol, vol_threshold):
             df_daily = df_1h.resample('D').agg({'Volume':'sum','Close':'last'}).dropna()
             df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
             
-            if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
+            if s['check_daily_ma60_up'] and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
             if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
-            if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
-            if hv_rank_val > hv_threshold: return None
+            if s['check_price_above_daily_ma60'] and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
+            if hv_rank_val > s['hv_threshold']: return None
             
-            # 週線點火
-            if "週線點火" in ignition_mode or check_ma60_strong_trend:
+            if "週線點火" in s['ignition_mode'] or s['check_ma60_strong_trend']:
                 df_wk = df_daily_2y.resample('W').agg({'Close':'last','High':'max'}).dropna()
-                if check_ma60_strong_trend:
+                if s['check_ma60_strong_trend']:
                     ma60_wk = df_wk['Close'].rolling(60).mean()
                     if len(ma60_wk)>5 and not ma60_wk.tail(5).is_monotonic_increasing: return None
-                if "週線點火" in ignition_mode and len(df_wk)>=3:
+                if "週線點火" in s['ignition_mode'] and len(df_wk)>=3:
                     curr = df_daily_2y['Close'].iloc[-1]
                     last_h = df_wk['High'].iloc[-2]
                     last_c = df_wk['Close'].iloc[-2]
@@ -316,15 +327,15 @@ def get_ghost_metrics(symbol, vol_threshold):
             ma60_4h_val = df_4h['MA60'].iloc[-1]
             dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
             
-            if abs(dist_pct_val) > dist_threshold: return None
-            if "4H 點火" in ignition_mode and len(df_4h)>=2:
+            if abs(dist_pct_val) > s['dist_threshold']: return None
+            if "4H 點火" in s['ignition_mode'] and len(df_4h)>=2:
                 if df_4h['Close'].iloc[-1] <= df_4h['High'].iloc[-2]: return None
             
-            if enable_u_logic: 
-                y = df_4h['MA60'].tail(u_sensitivity).values; x = np.arange(len(y))
+            if s['enable_u_logic']:
+                y = df_4h['MA60'].tail(s['u_sensitivity']).values; x = np.arange(len(y))
                 a, b, c = np.polyfit(x, y, 2)
                 if a <= 0: return None
-                if a < min_curvature: return None
+                if a < s['min_curvature']: return None
                 
             week_vol = log_ret.tail(5).std()*np.sqrt(5)*100 if len(log_ret)>=5 else 0
             box_str = f"±{round(df_daily_2y['Close'].iloc[-1]*(week_vol/100),2)}"
@@ -342,7 +353,6 @@ def get_ghost_metrics(symbol, vol_threshold):
                 tot_oi = chain.calls[chain.calls['strike']==strike]['openInterest'].sum() + \
                          chain.puts[chain.puts['strike']==strike]['openInterest'].sum()
                 atm_oi = f"{int(tot_oi):,}"
-                
                 max_c, max_p = 0, 0
                 for d in opts[:6]:
                     try:
@@ -356,7 +366,7 @@ def get_ghost_metrics(symbol, vol_threshold):
                     except: continue
         except: pass
 
-        if tot_oi < 2000: return None 
+        if tot_oi < 2000: return None
 
         earnings = "未知"
         if stock.calendar and 'Earnings Date' in stock.calendar:
@@ -370,8 +380,8 @@ def get_ghost_metrics(symbol, vol_threshold):
             "價平OI": atm_oi, "全Call大量": c_max, "全Put大量": p_max,
             "產業": translate_industry(stock.info.get('industry','N/A')), "下次財報": earnings,
             "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險",
-            "_sort_score": 99999 if enable_box_breakout else -abs(dist_pct_val),
-            "_vcp_weeks": final_box_weeks 
+            "_sort_score": 99999 if s['enable_box_breakout'] else -abs(dist_pct_val),
+            "_vcp_weeks": final_box_weeks
         }
     except: return None
 
@@ -401,7 +411,8 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.write(f"✅ 已獲得 {len(tickers)} 檔代號，開始過濾...")
         results = []; count = 0; progress = st.progress(0)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_ticker = {executor.submit(get_ghost_metrics, t, st.session_state.min_vol_m*1000000): t for t in tickers}
+            # 傳遞 settings 字典以避免 Thread NameError
+            future_to_ticker = {executor.submit(get_ghost_metrics, t, st.session_state.min_vol_m*1000000, settings): t for t in tickers}
             for future in as_completed(future_to_ticker):
                 data = future.result(); count += 1
                 progress.progress(count / len(tickers))
