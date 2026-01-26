@@ -60,12 +60,60 @@ def sync_logic_state():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 ---
+# --- 2. 核心策略導引區 (詳細版回歸) ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
-    col1, col2, col3 = st.columns(3)
-    with col1: st.markdown("### Step 1: 試探部位\n買低 Call + 賣高 Call (多頭價差)。")
-    with col2: st.markdown("### Step 2: 動能加碼\n浮盈且 IV 擴張時，加買更高階 Call。")
-    with col3: st.markdown("### Step 3: 轉化蝴蝶\n過熱時賣出中間價位 Call，鎖定負成本。")
+    col_step1, col_step2, col_step3 = st.columns(3)
+    
+    with col_step1:
+        st.markdown("### 第一步：建立試探部位 (Rule 1)")
+        st.markdown("""
+        **🚀 啟動時機**
+        放量突破關鍵壓力或回測支撐成功時。
+
+        **動作**
+        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
+
+        **成功指標**
+        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
+
+        **❌ 失敗判定**
+        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
+        """)
+        
+    with col_step2:
+        st.markdown("### 第二步：動能加碼 (Rule 2)")
+        st.markdown("""
+        **🚀 啟動時機**
+        當價差已產生「浮盈」，且股價衝向賣出價位時。
+
+        **動作**
+        加買 **更高一階的 Call**。
+
+        **成功指標**
+        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
+
+        **❌ 失敗判定**
+        動能衰竭或 IV 下降（冰塊融化）。
+        """)
+        
+    with col_step3:
+        st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
+        st.markdown("""
+        **🚀 啟動時機**
+        股價強勢漲破加碼價，且市場出現過熱訊號時。
+
+        **動作**
+        **再加賣一張中間價位的 Call** (總計賣出兩張)。
+
+        **成功指標**
+        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
+
+        **❌ 失敗判定**
+        爆量不漲或價格遠超最高階。
+        """)
+
+    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
+
 st.markdown("---")
 
 # --- 3. 側邊欄 ---
@@ -73,7 +121,6 @@ st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
-# settings 字典
 settings = {}
 
 st.sidebar.header("📦 箱型突破 (霸道模式)")
@@ -143,7 +190,7 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (完美標籤版) ---
+# --- 5. 繪圖函數 (完美標籤+VCP Box) ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
@@ -152,21 +199,20 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
     box_shapes = []
     is_box_mode = st.session_state.get('box_mode_key', False)
     
-    # 準備期權牆線條與標籤
     def get_wall_shapes_annotations(cw, pw):
         sh, an = [], []
         if cw and cw != "N/A":
             try:
                 p = float(cw)
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#FF6347", width=1, dash="dash")))
-                # yshift=10 向上推，避免與下方 Put 重疊
+                # yshift=10 向上
                 an.append(dict(xref="paper", x=1.01, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="left", yanchor="bottom", yshift=10, font=dict(color="#FF6347", size=12)))
             except: pass
         if pw and pw != "N/A":
             try:
                 p = float(pw)
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#3CB371", width=1, dash="dash")))
-                # yshift=-10 向下推，避免與上方 Call 重疊
+                # yshift=-10 向下
                 an.append(dict(xref="paper", x=1.01, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", yshift=-10, font=dict(color="#3CB371", size=12)))
             except: pass
         return sh, an
@@ -179,7 +225,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                # VCP 區塊 (加深顏色到 0.25)
+                # VCP 區塊
                 if is_box_mode and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
                     last_n = df.iloc[-(vcp_weeks+1):-1]
                     if len(last_n) > 0:
@@ -190,7 +236,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
                             x1=last_n.index[-1], 
                             y1=last_n['High'].max(), 
                             line=dict(width=0), 
-                            fillcolor="rgba(30, 144, 255, 0.25)" # 加深可見度
+                            fillcolor="rgba(30, 144, 255, 0.25)"
                         ))
 
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
