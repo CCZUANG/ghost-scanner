@@ -218,32 +218,29 @@ def translate_industry(eng):
         if key in target: return val
     return eng
 
-# --- 5. 核心繪圖函數 (美化版期權牆 + VCP Box 回歸) ---
-def plot_interactive_chart(symbol, call_wall, put_wall):
+# --- 5. 核心繪圖函數 (美化版期權牆 + VCP Box 修復) ---
+def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     layout = dict(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, t=50, b=50), legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), dragmode=False)
     
-    # 準備 VCP 箱型 (如果 box mode 開啟)
+    # 準備 VCP 箱型
     box_shapes = []
     
-    # 讀取 Session State 確保 UI 連動
+    # 讀取 Session State
     is_box_mode = st.session_state.get('box_mode_key', False)
     
-    with tab1: # 周線 (主要看 VCP)
+    with tab1: # 周線
         try:
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                # [修復] VCP 箱型繪製
-                if is_box_mode:
-                    # 使用全域變數或預設值
-                    weeks_to_plot = box_weeks
-                    
-                    # 簡單檢查：如果資料夠長，就畫出最後 N 週的區間
-                    if len(df) > weeks_to_plot + 1:
-                        last_n = df.iloc[-(weeks_to_plot+1):-1]
+                # [修復] VCP 箱型繪製 (使用傳入的 vcp_weeks)
+                if is_box_mode and vcp_weeks > 0:
+                    # 如果資料夠長，就畫出最後 N 週的區間
+                    if len(df) > vcp_weeks + 1:
+                        last_n = df.iloc[-(vcp_weeks+1):-1]
                         if len(last_n) > 0:
                             b_top = last_n['High'].max()
                             b_bottom = last_n['Low'].min()
@@ -255,29 +252,48 @@ def plot_interactive_chart(symbol, call_wall, put_wall):
                                 x1=last_n.index[-1], 
                                 y1=b_top, 
                                 line=dict(width=0), 
-                                fillcolor="rgba(100, 149, 237, 0.2)" # CornflowerBlue, 0.2 opacity
+                                fillcolor="rgba(30, 144, 255, 0.2)" # DodgerBlue, 0.2 opacity
                             ))
 
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
                 
-                # 加入期權牆 (使用 add_hline 配合右側標籤，不擋 K 線)
+                # 美化版期權牆 (文字標籤移到最右側，不擋K線)
+                annotations = []
                 if call_wall and call_wall != "N/A":
                     try:
                         cw = float(call_wall)
-                        fig.add_hline(y=cw, line_dash="dot", line_color="rgba(255, 99, 71, 0.7)", line_width=1.5,
-                                      annotation_text=f"🔥 Call Wall {cw}", annotation_position="top right", annotation_font_color="#FF6347")
+                        fig.add_hline(y=cw, line_dash="dash", line_color="rgba(255, 99, 71, 0.6)", line_width=1)
+                        # 右側標籤
+                        annotations.append(dict(
+                            xref="paper", x=1, y=cw, 
+                            text=f"Call Wall {cw}", 
+                            showarrow=False, 
+                            xanchor="left", yanchor="bottom", # 文字在線上方
+                            font=dict(color="#FF6347", size=10),
+                            bgcolor="rgba(0,0,0,0.5)"
+                        ))
                     except: pass
                 
                 if put_wall and put_wall != "N/A":
                     try:
                         pw = float(put_wall)
-                        fig.add_hline(y=pw, line_dash="dot", line_color="rgba(60, 179, 113, 0.7)", line_width=1.5,
-                                      annotation_text=f"🛡️ Put Wall {pw}", annotation_position="bottom right", annotation_font_color="#3CB371")
+                        fig.add_hline(y=pw, line_dash="dash", line_color="rgba(60, 179, 113, 0.6)", line_width=1)
+                        # 右側標籤
+                        annotations.append(dict(
+                            xref="paper", x=1, y=pw, 
+                            text=f"Put Wall {pw}", 
+                            showarrow=False, 
+                            xanchor="left", yanchor="top", # 文字在線下方
+                            font=dict(color="#3CB371", size=10),
+                            bgcolor="rgba(0,0,0,0.5)"
+                        ))
                     except: pass
 
                 if box_shapes: fig.update_layout(shapes=box_shapes)
-                fig.update_layout(title=f"{symbol} 周線 (含期權牆 & VCP)", **layout)
+                if annotations: fig.update_layout(annotations=annotations)
+                
+                fig.update_layout(title=f"{symbol} 周線 (含期權牆 & VCP箱型)", **layout)
                 if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("周線載入失敗")
@@ -290,20 +306,22 @@ def plot_interactive_chart(symbol, call_wall, put_wall):
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
                 
-                # 期權牆 (日線也要畫)
+                # 期權牆 (日線)
+                annotations_d = []
                 if call_wall and call_wall != "N/A":
                     try:
                         cw = float(call_wall)
-                        fig.add_hline(y=cw, line_dash="dot", line_color="rgba(255, 99, 71, 0.7)", line_width=1.5,
-                                      annotation_text=f"🔥 Call Wall {cw}", annotation_position="top right", annotation_font_color="#FF6347")
+                        fig.add_hline(y=cw, line_dash="dash", line_color="rgba(255, 99, 71, 0.6)", line_width=1)
+                        annotations_d.append(dict(xref="paper", x=1, y=cw, text=f"Call {cw}", showarrow=False, xanchor="left", yanchor="bottom", font=dict(color="#FF6347"), bgcolor="rgba(0,0,0,0.5)"))
                     except: pass
                 if put_wall and put_wall != "N/A":
                     try:
                         pw = float(put_wall)
-                        fig.add_hline(y=pw, line_dash="dot", line_color="rgba(60, 179, 113, 0.7)", line_width=1.5,
-                                      annotation_text=f"🛡️ Put Wall {pw}", annotation_position="bottom right", annotation_font_color="#3CB371")
+                        fig.add_hline(y=pw, line_dash="dash", line_color="rgba(60, 179, 113, 0.6)", line_width=1)
+                        annotations_d.append(dict(xref="paper", x=1, y=pw, text=f"Put {pw}", showarrow=False, xanchor="left", yanchor="top", font=dict(color="#3CB371"), bgcolor="rgba(0,0,0,0.5)"))
                     except: pass
-
+                
+                if annotations_d: fig.update_layout(annotations=annotations_d)
                 fig.update_layout(title=f"{symbol} 日線", **layout)
                 if len(df) > 200: fig.update_xaxes(range=[df.index[-200], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
@@ -318,20 +336,22 @@ def plot_interactive_chart(symbol, call_wall, put_wall):
                 fig = go.Figure([go.Candlestick(x=df['d_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
                                  go.Scatter(x=df['d_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
                 
-                # 期權牆 (4H 也要畫)
+                # 期權牆 (4H)
+                annotations_4h = []
                 if call_wall and call_wall != "N/A":
                     try:
                         cw = float(call_wall)
-                        fig.add_hline(y=cw, line_dash="dot", line_color="rgba(255, 99, 71, 0.7)", line_width=1.5,
-                                      annotation_text=f"Call {cw}", annotation_position="top right", annotation_font_color="#FF6347")
+                        fig.add_hline(y=cw, line_dash="dash", line_color="rgba(255, 99, 71, 0.6)", line_width=1)
+                        annotations_4h.append(dict(xref="paper", x=1, y=cw, text=f"Call {cw}", showarrow=False, xanchor="left", yanchor="bottom", font=dict(color="#FF6347"), bgcolor="rgba(0,0,0,0.5)"))
                     except: pass
                 if put_wall and put_wall != "N/A":
                     try:
                         pw = float(put_wall)
-                        fig.add_hline(y=pw, line_dash="dot", line_color="rgba(60, 179, 113, 0.7)", line_width=1.5,
-                                      annotation_text=f"Put {pw}", annotation_position="bottom right", annotation_font_color="#3CB371")
+                        fig.add_hline(y=pw, line_dash="dash", line_color="rgba(60, 179, 113, 0.6)", line_width=1)
+                        annotations_4h.append(dict(xref="paper", x=1, y=pw, text=f"Put {pw}", showarrow=False, xanchor="left", yanchor="top", font=dict(color="#3CB371"), bgcolor="rgba(0,0,0,0.5)"))
                     except: pass
 
+                if annotations_4h: fig.update_layout(annotations=annotations_4h)
                 fig.update_layout(title=f"{symbol} 4H", **layout)
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
@@ -350,6 +370,7 @@ def get_ghost_metrics(symbol, vol_threshold):
         
         ma60_4h_val = 0
         dist_pct_val = 0
+        final_box_weeks = 0 # 預設0，若有偵測到會更新
         
         # --- A. 霸道模式 ---
         if enable_box_breakout:
@@ -371,7 +392,6 @@ def get_ghost_metrics(symbol, vol_threshold):
                 candidate_periods = [box_weeks] 
             
             found_vcp = False
-            final_box_weeks = 0
             final_box_high = 0
             final_box_amp = 0
             current_week = df_wk.iloc[-1]
@@ -495,13 +515,13 @@ def get_ghost_metrics(symbol, vol_threshold):
                     if y[-1] <= y[-2]: return None
                 if a < min_curvature: return None
 
-        # --- 期權數據 (共用) ---
+        # --- 期權數據 ---
         atm_oi_display = "N/A"
         near_call_max = "N/A"
         near_put_max = "N/A"
         all_call_max = "N/A"
         all_put_max = "N/A"
-        total_atm_oi_val = 0 # 用於過濾
+        total_atm_oi_val = 0 
         
         try:
             opts = stock.options
@@ -573,7 +593,8 @@ def get_ghost_metrics(symbol, vol_threshold):
             "產業": translate_industry(stock.info.get('industry', 'N/A')),
             "下次財報": earnings_date, 
             "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
-            "_sort_score": 99999 if enable_box_breakout else -abs(dist_pct_val)
+            "_sort_score": 99999 if enable_box_breakout else -abs(dist_pct_val),
+            "_vcp_weeks": final_box_weeks # 隱藏欄位：傳遞盤整週數給繪圖函數
         }
     except: return None
 
@@ -635,7 +656,8 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         column_config={
             "代號": st.column_config.LinkColumn("代號 (點我跳轉)", display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"),
             "題材搜尋": st.column_config.LinkColumn("題材與風險", display_text="🔍 查詢"),
-            "_sort_score": None
+            "_sort_score": None,
+            "_vcp_weeks": None # 隱藏此技術欄位
         },
         hide_index=True, use_container_width=True
     )
@@ -659,16 +681,18 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         if selected_pill:
             target = selected_pill.split(" - ")[0]
             
-            # 從結果中找回 Call/Put Wall 數據
+            # 從結果中找回數據
             row_data = df[df['代號'] == target]
             if not row_data.empty:
                 call_wall = row_data.iloc[0]['全Call大量'] 
                 put_wall = row_data.iloc[0]['全Put大量']
+                # 【關鍵】獲取偵測到的 VCP 週數
+                vcp_weeks_val = row_data.iloc[0].get('_vcp_weeks', 0)
             else:
-                call_wall = "N/A"; put_wall = "N/A"
+                call_wall = "N/A"; put_wall = "N/A"; vcp_weeks_val = 0
             
             st.caption(f"目前檢視: {target}")
-            plot_interactive_chart(target, call_wall, put_wall)
+            plot_interactive_chart(target, call_wall, put_wall, vcp_weeks_val)
         else:
             st.info("請點選上方標籤以查看 K 線")
     else:
