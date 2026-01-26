@@ -251,7 +251,7 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (數據源修復+雙重突破) ---
+# --- 6. 核心指標運算 (數據源修復+雙重突破+期權OI) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
@@ -297,7 +297,6 @@ def get_ghost_metrics(symbol, vol_threshold):
             
             if current_week['Close'] < box_high * 0.99: return None
             
-            # 補全 4H 數據
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -305,6 +304,28 @@ def get_ghost_metrics(symbol, vol_threshold):
                     df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
                     ma60_4h_val = df_4h['MA60'].iloc[-1]
                     dist_pct_val = ((df_4h['Close'].iloc[-1] - ma60_4h_val) / ma60_4h_val) * 100
+            except: pass
+
+            # 【新增】抓取價平期權未平倉量 (ATM OI)
+            atm_oi_display = "N/A"
+            try:
+                options_dates = stock.options
+                if options_dates:
+                    nearest_date = options_dates[0]
+                    chain = stock.option_chain(nearest_date)
+                    calls = chain.calls
+                    puts = chain.puts
+                    
+                    cur_price = current_week['Close']
+                    closest_strike_idx = (calls['strike'] - cur_price).abs().idxmin()
+                    atm_strike = calls.loc[closest_strike_idx, 'strike']
+                    
+                    c_oi = calls[calls['strike'] == atm_strike]['openInterest'].sum()
+                    p_oi = puts[puts['strike'] == atm_strike]['openInterest'].sum()
+                    total_atm_oi = c_oi + p_oi
+                    atm_oi_display = f"{int(total_atm_oi):,}"
+                else:
+                    atm_oi_display = "無"
             except: pass
 
             earnings_date = "未知"
@@ -320,6 +341,7 @@ def get_ghost_metrics(symbol, vol_threshold):
                 "現價": round(current_week['Close'], 2),
                 "4H 60MA": round(ma60_4h_val, 2) if ma60_4h_val != 0 else "N/A",
                 "4H MA60 乖離率": f"{round(dist_pct_val, 2)}%" if ma60_4h_val != 0 else "N/A",
+                "價平OI": atm_oi_display, # 新增欄位
                 "產業": translate_industry(stock.info.get('industry', 'N/A')),
                 "下次財報": earnings_date, 
                 "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
@@ -347,19 +369,14 @@ def get_ghost_metrics(symbol, vol_threshold):
                 if not df_wk['MA60'].tail(5).is_monotonic_increasing: return None
             else: return None
 
-        # 【修改處】週線點火：包含本週突破 OR 上週已突破
         if "週線點火" in ignition_mode:
             if df_wk is not None and len(df_wk) >= 3:
-                curr_price = df_daily_2y['Close'].iloc[-1] # 最新價
-                prev_week_high = df_wk['High'].iloc[-2]    # 上一週(已收盤)的最高價
+                curr_price = df_daily_2y['Close'].iloc[-1] 
+                prev_week_high = df_wk['High'].iloc[-2]    
+                prev_week_close = df_wk['Close'].iloc[-2]  
+                prev_2_week_high = df_wk['High'].iloc[-3]  
                 
-                prev_week_close = df_wk['Close'].iloc[-2]  # 上一週的收盤價
-                prev_2_week_high = df_wk['High'].iloc[-3]  # 上上週的最高價
-                
-                # 條件1: 本週正在突破上週高點
                 cond1 = curr_price > prev_week_high
-                
-                # 條件2: 上週已經收盤突破上上週高點 (延續強勢)
                 cond2 = prev_week_close > prev_2_week_high
                 
                 if not (cond1 or cond2): return None
@@ -404,6 +421,29 @@ def get_ghost_metrics(symbol, vol_threshold):
         if cal is not None and 'Earnings Date' in cal:
             earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
 
+        # 【新增】抓取價平期權未平倉量 (ATM OI)
+        atm_oi_display = "N/A"
+        try:
+            options_dates = stock.options
+            if options_dates:
+                nearest_date = options_dates[0]
+                chain = stock.option_chain(nearest_date)
+                calls = chain.calls
+                puts = chain.puts
+                
+                # 找到與現價最接近的 Strike
+                closest_strike_idx = (calls['strike'] - cur_price).abs().idxmin()
+                atm_strike = calls.loc[closest_strike_idx, 'strike']
+                
+                # 加總 Call + Put 的 OI
+                c_oi = calls[calls['strike'] == atm_strike]['openInterest'].sum()
+                p_oi = puts[puts['strike'] == atm_strike]['openInterest'].sum()
+                total_atm_oi = c_oi + p_oi
+                atm_oi_display = f"{int(total_atm_oi):,}"
+            else:
+                atm_oi_display = "無"
+        except: pass
+
         return {
             "代號": symbol, 
             "HV Rank": round(hv_rank_val, 1), 
@@ -412,6 +452,7 @@ def get_ghost_metrics(symbol, vol_threshold):
             "現價": round(cur_price, 2),
             "4H 60MA": round(df_4h['MA60'].iloc[-1], 2),
             "4H MA60 乖離率": f"{round(dist_pct, 2)}%",  
+            "價平OI": atm_oi_display, # 新增欄位
             "產業": translate_industry(stock.info.get('industry', 'N/A')),
             "下次財報": earnings_date, 
             "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
