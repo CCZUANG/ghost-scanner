@@ -60,60 +60,12 @@ def sync_logic_state():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (詳細版回歸) ---
+# --- 2. 核心策略導引區 ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
-    col_step1, col_step2, col_step3 = st.columns(3)
-    
-    with col_step1:
-        st.markdown("### 第一步：建立試探部位 (Rule 1)")
-        st.markdown("""
-        **🚀 啟動時機**
-        放量突破關鍵壓力或回測支撐成功時。
-
-        **動作**
-        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
-
-        **成功指標**
-        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
-
-        **❌ 失敗判定**
-        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
-        """)
-        
-    with col_step2:
-        st.markdown("### 第二步：動能加碼 (Rule 2)")
-        st.markdown("""
-        **🚀 啟動時機**
-        當價差已產生「浮盈」，且股價衝向賣出價位時。
-
-        **動作**
-        加買 **更高一階的 Call**。
-
-        **成功指標**
-        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
-
-        **❌ 失敗判定**
-        動能衰竭或 IV 下降（冰塊融化）。
-        """)
-        
-    with col_step3:
-        st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
-        st.markdown("""
-        **🚀 啟動時機**
-        股價強勢漲破加碼價，且市場出現過熱訊號時。
-
-        **動作**
-        **再加賣一張中間價位的 Call** (總計賣出兩張)。
-
-        **成功指標**
-        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
-
-        **❌ 失敗判定**
-        爆量不漲或價格遠超最高階。
-        """)
-
-    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
-
+    col1, col2, col3 = st.columns(3)
+    with col1: st.markdown("### Step 1: 試探部位\n買低 Call + 賣高 Call (多頭價差)。")
+    with col2: st.markdown("### Step 2: 動能加碼\n浮盈且 IV 擴張時，加買更高階 Call。")
+    with col3: st.markdown("### Step 3: 轉化蝴蝶\n過熱時賣出中間價位 Call，鎖定負成本。")
 st.markdown("---")
 
 # --- 3. 側邊欄 ---
@@ -190,7 +142,7 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (完美標籤+VCP Box) ---
+# --- 5. 繪圖函數 ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
@@ -205,14 +157,14 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
             try:
                 p = float(cw)
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#FF6347", width=1, dash="dash")))
-                # yshift=10 向上
+                # yshift=10
                 an.append(dict(xref="paper", x=1.01, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="left", yanchor="bottom", yshift=10, font=dict(color="#FF6347", size=12)))
             except: pass
         if pw and pw != "N/A":
             try:
                 p = float(pw)
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#3CB371", width=1, dash="dash")))
-                # yshift=-10 向下
+                # yshift=-10
                 an.append(dict(xref="paper", x=1.01, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", yshift=-10, font=dict(color="#3CB371", size=12)))
             except: pass
         return sh, an
@@ -225,7 +177,6 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                # VCP 區塊
                 if is_box_mode and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
                     last_n = df.iloc[-(vcp_weeks+1):-1]
                     if len(last_n) > 0:
@@ -272,20 +223,28 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心運算 ---
+# --- 6. 核心運算 (極速版：先過濾日線，再抓4H) ---
 def get_ghost_metrics(symbol, vol_threshold, s):
     try:
         stock = yf.Ticker(symbol)
+        
+        # 1. 先抓日線 (快)
         df_daily_2y = stock.history(period="2y", interval="1d")
         if len(df_daily_2y) < 250: return None
         
+        # 準備基礎日線數據
+        df_daily_2y['MA60'] = df_daily_2y['Close'].rolling(60).mean()
         log_ret = np.log(df_daily_2y['Close'] / df_daily_2y['Close'].shift(1))
         vol_30d = log_ret.rolling(30).std() * np.sqrt(252) * 100
         hv_rank_val = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
+        
+        current_close = df_daily_2y['Close'].iloc[-1]
+        current_ma60 = df_daily_2y['MA60'].iloc[-1]
+        
         ma60_4h_val, dist_pct_val = 0, 0
         final_box_weeks = 0 
 
-        # --- A. 霸道模式 ---
+        # --- A. 霸道模式 (箱型) ---
         if s['enable_box_breakout']:
             df_wk = df_daily_2y.resample('W').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
             if len(df_wk) < 15: return None
@@ -335,6 +294,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
             
             if not found_vcp: return None
             
+            # 【優化點】只有通過箱型過濾後，才抓 4H 資料
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -344,18 +304,19 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                     dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
             except: pass
 
-        # --- B. 幽靈模式 ---
+        # --- B. 幽靈模式 (非霸道) ---
         else:
-            df_1h = stock.history(period="1y", interval="1h")
-            if len(df_1h) < 240: return None
-            df_daily = df_1h.resample('D').agg({'Volume':'sum','Close':'last'}).dropna()
-            df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
+            # 1. 先用日線做第一層快速過濾 (不耗時)
+            if s['check_daily_ma60_up'] and current_ma60 <= df_daily_2y['MA60'].iloc[-2]: return None
             
-            if s['check_daily_ma60_up'] and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
-            if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
-            if s['check_price_above_daily_ma60'] and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
+            daily_vol = df_daily_2y['Volume'].rolling(20).mean().iloc[-1]
+            if daily_vol < vol_threshold: return None
+            
+            if s['check_price_above_daily_ma60'] and current_close < current_ma60: return None
             if hv_rank_val > s['hv_threshold']: return None
             
+            # 週線點火預檢
+            df_wk = None
             if "週線點火" in s['ignition_mode'] or s['check_ma60_strong_trend']:
                 df_wk = df_daily_2y.resample('W').agg({'Close':'last','High':'max'}).dropna()
                 if s['check_ma60_strong_trend']:
@@ -368,6 +329,10 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                     prev_h = df_wk['High'].iloc[-3]
                     if not (curr > last_h or last_c > prev_h): return None
 
+            # 【關鍵優化】只有通過上述日線/週線檢查的，才去抓 1H 資料 (耗時)
+            df_1h = stock.history(period="1y", interval="1h")
+            if len(df_1h) < 240: return None
+            
             df_4h = df_1h.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last'}).dropna()
             df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
             ma60_4h_val = df_4h['MA60'].iloc[-1]
@@ -387,7 +352,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
             box_str = f"±{round(df_daily_2y['Close'].iloc[-1]*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
 
-        # --- 期權 ---
+        # --- 期權與回傳 ---
         atm_oi = "N/A"; c_max = "N/A"; p_max = "N/A"; tot_oi = 0
         try:
             opts = stock.options
