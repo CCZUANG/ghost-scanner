@@ -17,14 +17,13 @@ if 'min_vol_m' not in st.session_state: st.session_state.min_vol_m = 10
 if 'dist_threshold' not in st.session_state: st.session_state.dist_threshold = 8.0
 if 'u_sensitivity' not in st.session_state: st.session_state.u_sensitivity = 30
 
-# 備份機制：用來記住使用者原本的設定
+# 備份機制
 if 'backup' not in st.session_state:
     st.session_state.backup = {
         'scan_limit': 600, 'min_vol_m': 10, 'dist_threshold': 8.0, 'u_sensitivity': 30
     }
 
 def handle_u_logic_toggle():
-    """連動邏輯：啟動U型時，自動調整參數以利偵測"""
     if st.session_state.u_logic_key:
         st.session_state.backup.update({
             'scan_limit': st.session_state.scan_limit,
@@ -43,81 +42,35 @@ def handle_u_logic_toggle():
         st.session_state.u_sensitivity = st.session_state.backup['u_sensitivity']
 
 def handle_spoon_toggle():
-    """勺子模式獨立連動"""
     if st.session_state.spoon_strict_key:
         st.session_state.u_sensitivity = 240
 
 def handle_ignition_toggle():
-    """【新增】連動邏輯：啟動週線點火時，自動放寬乖離率限制，關閉時還原"""
-    # 讀取目前選擇的模式
-    mode = st.session_state.ignition_mode_key
-    
-    if mode == "🚀 週線點火 (大波段過上週高)":
-        # 1. 先備份現在的設定 (例如 8.0)
-        st.session_state.backup['dist_threshold'] = st.session_state.dist_threshold
-        # 2. 自動拉到最大 (50.0)，避免突破股被過濾掉
-        st.session_state.dist_threshold = 50.0
-    else:
-        # 3. 切換回其他模式時，還原成原本的設定 (例如 8.0)
-        if 'dist_threshold' in st.session_state.backup:
-            st.session_state.dist_threshold = st.session_state.backup['dist_threshold']
+    # 僅在非箱型模式下運作
+    if not st.session_state.get('box_mode_key', False):
+        mode = st.session_state.ignition_mode_key
+        if mode == "🚀 週線點火 (大波段過上週高)":
+            st.session_state.backup['dist_threshold'] = st.session_state.dist_threshold
+            st.session_state.dist_threshold = 50.0
+        else:
+            if 'dist_threshold' in st.session_state.backup:
+                st.session_state.dist_threshold = st.session_state.backup['dist_threshold']
 
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (詳細版) ---
+# --- 2. 核心策略導引區 ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
-    
     with col_step1:
-        st.markdown("### 第一步：建立試探部位 (Rule 1)")
-        st.markdown("""
-        **🚀 啟動時機**
-        放量突破關鍵壓力或回測支撐成功時。
-
-        **動作**
-        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
-
-        **成功指標**
-        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
-
-        **❌ 失敗判定**
-        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
-        """)
-        
+        st.markdown("### Rule 1: 建立試探部位")
+        st.markdown("放量突破或回測支撐時，買低 Call + 賣高 Call (多頭價差)。")
     with col_step2:
-        st.markdown("### 第二步：動能加碼 (Rule 2)")
-        st.markdown("""
-        **🚀 啟動時機**
-        當價差已產生「浮盈」，且股價衝向賣出價位時。
-
-        **動作**
-        加買 **更高一階的 Call**。
-
-        **成功指標**
-        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
-
-        **❌ 失敗判定**
-        動能衰竭或 IV 下降（冰塊融化）。
-        """)
-        
+        st.markdown("### Rule 2: 動能加碼")
+        st.markdown("浮盈且 IV 擴張時，加買更高階 Call。")
     with col_step3:
-        st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
-        st.markdown("""
-        **🚀 啟動時機**
-        股價強勢漲破加碼價，且市場出現過熱訊號時。
-
-        **動作**
-        **再加賣一張中間價位的 Call** (總計賣出兩張)。
-
-        **成功指標**
-        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
-
-        **❌ 失敗判定**
-        爆量不漲或價格遠超最高階。
-        """)
-
-    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
+        st.markdown("### Rule 3: 轉化蝴蝶")
+        st.markdown("過熱時賣出中間價位 Call，鎖定負成本。")
 
 st.markdown("---")
 
@@ -125,41 +78,54 @@ st.markdown("---")
 st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 
-st.sidebar.header("📈 戰法連動")
+# --- 【新增】箱型突破 (霸道模式) ---
+st.sidebar.header("📦 箱型突破 (霸道模式)")
+enable_box_breakout = st.sidebar.checkbox(
+    "✅ 啟動週線橫盤突破 (忽略其他條件)", 
+    value=False, 
+    key='box_mode_key',
+    help="啟動此濾網時，將忽略下方的 MA60、乖離率、U型等所有設定，只篩選「盤整突破」的股票。"
+)
+
+if enable_box_breakout:
+    st.sidebar.warning("⚠️ 霸道模式已啟動：下方其他濾網已暫時失效。")
+    box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 30, 10, help="股票必須在過去 N 週內橫向整理")
+    box_tightness = st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25, help="數值越小代表盤整越緊密 (壓縮越極致)")
+else:
+    box_weeks = 10
+    box_tightness = 25
+
+st.sidebar.divider()
+
+# 以下為原本的濾網，當箱型模式開啟時，這些設定在運算中會被忽略，但在 UI 上保留
+st.sidebar.header("📈 幽靈戰法連動")
 enable_u_logic = st.sidebar.checkbox("✅ 啟動 4小時 U型戰法連動", value=False, key='u_logic_key', on_change=handle_u_logic_toggle)
 
-# --- 嚴格勺子模式 ---
 enable_spoon_strict = False
 spoon_vertex_range = (50, 95)
 if enable_u_logic:
-    enable_spoon_strict = st.sidebar.checkbox("🥄 嚴格勺子模式 (尋找剛翻揚)", value=True, key='spoon_strict_key', on_change=handle_spoon_toggle)
+    enable_spoon_strict = st.sidebar.checkbox("🥄 嚴格勺子模式", value=True, key='spoon_strict_key', on_change=handle_spoon_toggle)
     if enable_spoon_strict:
         spoon_vertex_range = st.sidebar.slider("🥄 勺子底部位置 (%)", 0, 100, (50, 95), 5)
 
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
 
-# --- 趨勢濾網 ---
-st.sidebar.header("🛡️ 趨勢濾網")
-check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上 (昨日<今日)", value=True)
-check_ma60_strong_trend = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢 (連續5週上升)", value=True, help="強制篩選出「週線」MA60 呈現穩定上升曲線的股票 (如 CCL)")
+st.sidebar.header("🛡️ 趨勢與點火")
+check_daily_ma60_up = st.sidebar.checkbox("✅ 日線 60MA 向上", value=True)
+check_ma60_strong_trend = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢", value=True)
 check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
 
-# --- 動能點火濾網 (加入 key 和 on_change 連動) ---
-st.sidebar.header("🔥 動能點火 (進場即發動)")
 ignition_mode = st.sidebar.radio(
-    "選擇點火週期 (右側交易):",
-    ["🚫 不啟用 (左側佈局)", "⚡ 4H 點火 (短線突破前高)", "🚀 週線點火 (大波段過上週高)"],
+    "動能點火週期:",
+    ["🚫 不啟用", "⚡ 4H 點火", "🚀 週線點火"],
     index=0,
-    key="ignition_mode_key",         # 設定 key 以便讀取狀態
-    on_change=handle_ignition_toggle, # 設定連動函數
-    help="4H點火適合短線快進快出；週線點火適合確認波段大趨勢發動 (開啟週線點火時，會自動放寬乖離率限制)。"
+    key="ignition_mode_key",
+    on_change=handle_ignition_toggle
 )
 
 st.sidebar.header("⚙️ 基礎篩選")
 hv_threshold = st.sidebar.slider("HV Rank 門檻", 10, 100, 30)
 min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
-
-# 這裡使用 key='dist_threshold'，數值會被 handle_ignition_toggle 動態修改
 dist_threshold = st.sidebar.slider("距離 4H MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
 
 if enable_u_logic:
@@ -195,8 +161,21 @@ def plot_interactive_chart(symbol):
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
                 df['MA60'] = df['Close'].rolling(60).mean()
+                
+                # 若開啟箱型模式，畫出箱型
+                shapes = []
+                if enable_box_breakout:
+                    # 簡單計算箱頂，輔助視覺
+                    last_n = df.iloc[-(box_weeks+1):-1]
+                    if len(last_n) > 0:
+                        box_top = last_n['High'].max()
+                        box_bottom = last_n['Low'].min()
+                        shapes.append(dict(type="rect", x0=last_n.index[0], y0=box_bottom, x1=last_n.index[-1], y1=box_top, line=dict(color="RoyalBlue"), fillcolor="LightSkyBlue", opacity=0.3))
+                
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=3))])
+                
+                if shapes: fig.update_layout(shapes=shapes)
                 fig.update_layout(title=f"{symbol} 周線", **layout)
                 if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
@@ -226,43 +205,89 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (含週線點火邏輯) ---
+# --- 6. 核心指標運算 (霸道模式整合) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
-        stock = yf.Ticker(symbol); 
-        # 1. 先抓 1年小時資料
+        stock = yf.Ticker(symbol)
+        
+        # --- A. 霸道模式：箱型突破邏輯 ---
+        if enable_box_breakout:
+            # 強制抓取週線資料
+            df_wk = stock.history(period="2y", interval="1wk")
+            if len(df_wk) < box_weeks + 2: return None
+            
+            # 1. 基礎成交量過濾 (還是要稍微看一下流動性)
+            avg_vol = df_wk['Volume'].tail(10).mean()
+            if avg_vol < vol_threshold / 5: return None # 週成交量門檻稍微放寬
+            
+            # 2. 定義「過去 N 週」的盤整區 (不含本週)
+            # iloc[-1] 是本週(進行中), iloc[-2] 是上週...
+            # 我們要看的是 [-2] 往前推 box_weeks 的這段區間
+            box_start_idx = -(box_weeks + 1)
+            box_data = df_wk.iloc[box_start_idx:-1] # 過去 N 週的資料
+            current_week = df_wk.iloc[-1]           # 本週資料
+            
+            # 3. 計算箱頂與箱底
+            box_high = box_data['High'].max()
+            box_low = box_data['Low'].min()
+            
+            # 4. 檢查盤整緊密度 (避免選到波幅過大的股票)
+            box_amplitude = (box_high - box_low) / box_low * 100
+            if box_amplitude > box_tightness: return None # 震幅太大，不是好的盤整
+            
+            # 5. 突破判斷：本週收盤價 > 箱頂
+            # 為了確保是真突破，可以用 Close > box_high
+            if current_week['Close'] <= box_high: return None
+            
+            # 若符合箱型突破，直接回傳結果，跳過下方所有 Ghost 邏輯
+            earnings_date = "未知"
+            cal = stock.calendar
+            if cal is not None and 'Earnings Date' in cal:
+                earnings_date = cal['Earnings Date'][0].strftime('%m-%d')
+                
+            return {
+                "代號": symbol, 
+                "HV Rank": "N/A", # 霸道模式不看這個
+                "週波動%": round(box_amplitude, 2), # 借用欄位顯示箱體震幅
+                "預期變動$": f"箱頂 {round(box_high, 2)}", # 借用欄位
+                "現價": round(current_week['Close'], 2),
+                "4H 60MA": "N/A",
+                "4H MA60 乖離率": "突破中", 
+                "產業": translate_industry(stock.info.get('industry', 'N/A')),
+                "下次財報": earnings_date, 
+                "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險", 
+                "_sort_score": 99999 # 給予最高排序分數
+            }
+
+        # --- B. 原本的幽靈策略邏輯 (當霸道模式關閉時執行) ---
+        
+        # 1. 抓取資料
         df_1h = stock.history(period="1y", interval="1h")
         if len(df_1h) < 240: return None
         
-        # 2. 轉換為日線做基礎過濾
         df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
         df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
         
         if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
         if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
         
-        # 3. 週線資料處理 (Trend Filter 或 Ignition Filter 需要)
+        # 週線相關檢查
         df_wk = None
-        if check_ma60_strong_trend or ignition_mode == "🚀 週線點火 (大波段過上週高)":
+        if check_ma60_strong_trend or ignition_mode == "🚀 週線點火":
             df_wk = stock.history(period="2y", interval="1wk")
         
-        # 週線 MA60 強勢趨勢過濾
         if check_ma60_strong_trend:
             if df_wk is not None and len(df_wk) > 65:
                 df_wk['MA60'] = df_wk['Close'].rolling(60).mean()
                 if not df_wk['MA60'].tail(5).is_monotonic_increasing: return None
-            else:
-                return None
+            else: return None
 
-        # 週線點火濾網 (Weekly Ignition)
-        if ignition_mode == "🚀 週線點火 (大波段過上週高)":
+        if ignition_mode == "🚀 週線點火":
             if df_wk is not None and len(df_wk) >= 2:
-                # 邏輯：現價 > 上週最高價
                 curr_price = df_1h['Close'].iloc[-1]
                 prev_week_high = df_wk['High'].iloc[-2]
                 if curr_price <= prev_week_high: return None
-            else:
-                return None
+            else: return None
 
         if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
         
@@ -275,18 +300,14 @@ def get_ghost_metrics(symbol, vol_threshold):
         cur_price = df_daily['Close'].iloc[-1]
         move_dollar = cur_price * (week_vol_move / 100)
         
-        # 5. 乖離率與 4H 處理
         df_4h = df_1h.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
         df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
         dist_pct = ((df_4h['Close'].iloc[-1] - df_4h['MA60'].iloc[-1]) / df_4h['MA60'].iloc[-1]) * 100
         if abs(dist_pct) > dist_threshold: return None
         
-        # 4H 點火濾網
-        if ignition_mode == "⚡ 4H 點火 (短線突破前高)":
+        if ignition_mode == "⚡ 4H 點火":
             if len(df_4h) < 2: return None
-            curr_close = df_4h['Close'].iloc[-1]
-            prev_high = df_4h['High'].iloc[-2]
-            if curr_close <= prev_high: return None
+            if df_4h['Close'].iloc[-1] <= df_4h['High'].iloc[-2]: return None
         
         u_score = -abs(dist_pct)
         if enable_u_logic:
@@ -350,7 +371,9 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     st.session_state['scan_results'] = None
     min_volume_threshold = st.session_state.min_vol_m * 1000000 
     
-    with st.status("🔍 掃描中...", expanded=True) as status:
+    status_text = "🔍 掃描中 (霸道模式)..." if enable_box_breakout else "🔍 掃描中..."
+    
+    with st.status(status_text, expanded=True) as status:
         tickers = get_tickers_robust(market_choice)[:scan_limit]
         total_tickers = len(tickers)
         
@@ -368,12 +391,15 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"完成！共 {len(results)} 檔。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False if enable_u_logic else True)
+    # 霸道模式下的排序邏輯 (可選)
+    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="_sort_score", ascending=False)
     
     df_display = df.copy()
     df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
 
-    st.subheader("📋 幽靈策略篩選列表")
+    st.subheader("📋 策略篩選列表")
+    if enable_box_breakout:
+        st.caption(f"🔥 目前顯示：符合【連續 {box_weeks} 週橫盤 + 本週突破】之強勢股")
     
     st.dataframe(
         df_display,
@@ -386,7 +412,7 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     )
     
     st.markdown("---")
-    st.subheader("🕯️ 三週期 K 線檢視")
+    st.subheader("🕯️ K 線檢視")
     
     options = df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist()
 
