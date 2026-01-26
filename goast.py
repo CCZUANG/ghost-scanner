@@ -165,7 +165,7 @@ check_price_above_daily_ma60 = st.sidebar.checkbox("✅ 股價 > 日線 60MA", v
 
 ignition_mode = st.sidebar.radio(
     "動能點火週期:",
-    ["🚫 不啟用 (左側佈局)", "⚡ 4H 點火 (短線突破前高)", "🚀 週線點火 (大波段過上週高)"],
+    ["🚫 不啟用 (左側佈局)", "⚡ 4H 點火 (短線突破前高)", "🚀 週線點火 (本週突破 OR 上週已突破)"],
     index=0,
     key="ignition_mode_key",
     on_change=sync_logic_state 
@@ -251,32 +251,26 @@ def plot_interactive_chart(symbol):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心指標運算 (數據源修復版) ---
+# --- 6. 核心指標運算 (數據源修復+雙重突破) ---
 def get_ghost_metrics(symbol, vol_threshold):
     try:
         stock = yf.Ticker(symbol)
         
-        # 【關鍵修復】統一抓取日線資料 (2年)，避免週線 API 回傳空值
+        # 統一抓取日線資料 (2年)
         df_daily_2y = stock.history(period="2y", interval="1d")
         
-        if len(df_daily_2y) < 250: return None # 資料不足一年直接跳過
+        if len(df_daily_2y) < 250: return None 
         
-        # 準備基礎數據：HV Rank, 4H MA60, 乖離率 (這些是通用數據)
-        # 為了計算 HV Rank，使用日線
+        # 準備基礎數據
         log_ret = np.log(df_daily_2y['Close'] / df_daily_2y['Close'].shift(1))
         vol_30d = log_ret.rolling(30).std() * np.sqrt(252) * 100
         hv_rank_val = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
         
-        # 為了計算 4H 數據，我們需要額外抓取 1y 1h 數據 (如果尚未抓取)
-        # 注意：這裡為了效能，只有在非霸道模式下才強制過濾，霸道模式下僅作為資訊補充
         ma60_4h_val = 0
         dist_pct_val = 0
-        df_1h = None 
         
         # --- A. 霸道模式：箱型突破邏輯 ---
         if enable_box_breakout:
-            # 1. 手動將日線重取樣(Resample)為週線 ('W')
-            # 規則：開盤=第一天Open, 收盤=最後一天Close, 最高=區間Max, 最低=區間Min, 成交量=Sum
             df_wk = df_daily_2y.resample('W').agg({
                 'Open': 'first', 
                 'High': 'max', 
@@ -287,14 +281,9 @@ def get_ghost_metrics(symbol, vol_threshold):
             
             if len(df_wk) < box_weeks + 2: return None
             
-            # 成交量檢查 (檢查最近 10 週的平均)
             avg_vol = df_wk['Volume'].tail(10).mean()
-            # 這裡 vol_threshold 是原本為 Daily 設計的 (e.g. 10M)
-            # 週成交量通常是日成交量的 5 倍，所以如果我們用日均量標準來卡週均量，會太嚴
-            # 這裡假設使用者設定的是「日均量」，所以週均量應該要 > (日均量 * 3) 比較保險
             if avg_vol < vol_threshold * 2: return None 
             
-            # 2. 定義箱型
             box_start_idx = -(box_weeks + 1)
             box_data = df_wk.iloc[box_start_idx:-1]
             current_week = df_wk.iloc[-1]           
@@ -302,15 +291,13 @@ def get_ghost_metrics(symbol, vol_threshold):
             box_high = box_data['High'].max()
             box_low = box_data['Low'].min()
             
-            # 3. 寬度檢查
             if box_low == 0: return None
             box_amplitude = (box_high - box_low) / box_low * 100
             if box_amplitude > box_tightness: return None
             
-            # 4. 突破檢查 (1% 緩衝)
             if current_week['Close'] < box_high * 0.99: return None
             
-            # 5. 嘗試補全 4H 數據 (不強求，失敗就算了)
+            # 補全 4H 數據
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -341,18 +328,15 @@ def get_ghost_metrics(symbol, vol_threshold):
 
         # --- B. 原本的幽靈策略邏輯 (非霸道模式) ---
         
-        # 1. 抓取 1H 資料
         df_1h = stock.history(period="1y", interval="1h")
         if len(df_1h) < 240: return None
         
-        # 2. 轉換為日線
         df_daily = df_1h.resample('D').agg({'Volume': 'sum', 'Close': 'last'}).dropna()
         df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
         
         if check_daily_ma60_up and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
         if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
         
-        # 週線相關檢查 (同樣改用 resample 增強穩定性)
         df_wk = None
         if check_ma60_strong_trend or "週線點火" in ignition_mode:
             df_wk = df_daily_2y.resample('W').agg({'Close': 'last', 'High': 'max'}).dropna()
@@ -363,19 +347,27 @@ def get_ghost_metrics(symbol, vol_threshold):
                 if not df_wk['MA60'].tail(5).is_monotonic_increasing: return None
             else: return None
 
+        # 【修改處】週線點火：包含本週突破 OR 上週已突破
         if "週線點火" in ignition_mode:
-            if df_wk is not None and len(df_wk) >= 2:
-                curr_price = df_1h['Close'].iloc[-1]
-                prev_week_high = df_wk['High'].iloc[-2]
-                if curr_price <= prev_week_high: return None
+            if df_wk is not None and len(df_wk) >= 3:
+                curr_price = df_daily_2y['Close'].iloc[-1] # 最新價
+                prev_week_high = df_wk['High'].iloc[-2]    # 上一週(已收盤)的最高價
+                
+                prev_week_close = df_wk['Close'].iloc[-2]  # 上一週的收盤價
+                prev_2_week_high = df_wk['High'].iloc[-3]  # 上上週的最高價
+                
+                # 條件1: 本週正在突破上週高點
+                cond1 = curr_price > prev_week_high
+                
+                # 條件2: 上週已經收盤突破上上週高點 (延續強勢)
+                cond2 = prev_week_close > prev_2_week_high
+                
+                if not (cond1 or cond2): return None
             else: return None
 
         if check_price_above_daily_ma60 and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
-        
-        # HV Rank 已在上方計算
         if hv_rank_val > hv_threshold: return None
         
-        # 計算波動預期
         week_vol_move = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
         cur_price = df_daily['Close'].iloc[-1]
         move_dollar = cur_price * (week_vol_move / 100)
