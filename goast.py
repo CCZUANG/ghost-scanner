@@ -191,7 +191,7 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (修正：*args + Close 大寫 + 手機 Layout) ---
+# --- 5. 繪圖函數 ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
@@ -230,7 +230,6 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args):
         try:
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
-                # 【修正】這裡確保使用 Capital 'Close'
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
                 if is_box_mode and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
@@ -276,7 +275,6 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args):
 
 # --- 6. 核心運算 (回傳結構化錯誤訊息) ---
 def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
-    # 回傳字典格式的錯誤，方便後續轉成 DataFrame
     def reject(reason): 
         return {"type": "error", "symbol": symbol, "reason": reason} if debug else None
 
@@ -461,12 +459,12 @@ def get_tickers_robust(choice):
             return list(set(t1 + t2))
     except: return ["AAPL","NVDA","TSLA","AMD","MSFT","GOOG","AMZN","META"]
 
-# --- 8. 主程式 (除錯訊息表格化) ---
+# --- 8. 主程式 (修復：建立 df_display 用於連結，保留 df 用於選擇) ---
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     st.session_state['scan_results'] = None
     status_text = "🔍 掃描中..."
     
-    error_list = [] # 用來收集錯誤的列表
+    error_list = []
 
     with st.status(status_text, expanded=True) as status:
         tickers = get_tickers_robust(market_choice)[:scan_limit]
@@ -484,18 +482,16 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
                 progress.progress(count / len(tickers))
                 
                 if data and data.get("type") == "success":
-                    # 移除 type 欄位後加入結果
                     data.pop("type")
                     results.append(data)
                 elif data and data.get("type") == "error":
-                    # 收集錯誤，稍後統一顯示
                     error_list.append({"代號": data["symbol"], "原因": data["reason"]})
 
-        # 【優化】掃描結束後，如果有錯誤，統一用表格顯示在 Status 裡
+        # 除錯訊息表格化 (優化版面)
         if debug_mode and error_list:
-            st.write("📉 **篩選失敗清單 (可捲動查看)**")
+            st.warning(f"📉 共有 {len(error_list)} 檔標的被篩除")
             err_df = pd.DataFrame(error_list)
-            st.dataframe(err_df, height=300, use_container_width=True)
+            st.dataframe(err_df, height=200, use_container_width=True)
 
         st.session_state['scan_results'] = results
         status.update(label=f"完成！共 {len(results)} 檔。", state="complete", expanded=False)
@@ -504,7 +500,11 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank")
     st.subheader("📋 策略篩選列表")
     
-    st.dataframe(df, column_config={
+    # 【修復連結】建立專用顯示表格，將代號轉為網址
+    df_display = df.copy()
+    df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
+
+    st.dataframe(df_display, column_config={
         "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"),
         "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍"),
         "_sort_score": None, "_vcp_weeks": None
@@ -512,6 +512,7 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     
     st.markdown("---")
     st.subheader("🕯️ K 線檢視")
+    # 選擇邏輯使用原始 df (純代號)，確保功能正常
     options = df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist()
     if options:
         sel = st.pills("👉 點擊標的", options, selection_mode="single")
