@@ -287,7 +287,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"4H 圖錯誤: {e}")
 
-# --- 6. 核心運算 ---
+# --- 6. 核心運算 (修正版：期權 OI 加總) ---
 def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
     def reject(reason): 
         return {"type": "error", "代號": symbol, "原因": reason} if debug else None
@@ -298,6 +298,8 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
         if df_daily_2y.empty: return reject("無法抓取資料 (Empty)")
         if len(df_daily_2y) < 250: return reject("資料不足 250 天")
         
+        # 2. 基礎數據
+        curr_price = df_daily_2y['Close'].iloc[-1]
         log_ret = np.log(df_daily_2y['Close'] / df_daily_2y['Close'].shift(1))
         vol_30d = log_ret.rolling(30).std() * np.sqrt(252) * 100
         hv_rank_val = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
@@ -410,32 +412,52 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             box_str = f"±{round(df_daily_2y['Close'].iloc[-1]*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
 
-        # --- 期權 ---
-        atm_oi = "N/A"; c_max = "N/A"; p_max = "N/A"; tot_oi = 0
+        # --- 期權運算 (修正：累積加總) ---
+        atm_oi = "N/A"; c_max_strike = "N/A"; p_max_strike = "N/A"
+        
+        # 使用字典來累積不同日期的 OI
+        call_oi_map = {} 
+        put_oi_map = {}
+        
         try:
             opts = stock.options
             if opts:
+                # 1. 計算價平 OI (維持只看最近月，因為這是流動性指標)
                 chain = stock.option_chain(opts[0])
-                curr = df_daily_2y['Close'].iloc[-1]
-                idx = (chain.calls['strike'] - curr).abs().idxmin()
-                strike = chain.calls.loc[idx, 'strike']
-                tot_oi = chain.calls[chain.calls['strike']==strike]['openInterest'].sum() + \
-                         chain.puts[chain.puts['strike']==strike]['openInterest'].sum()
-                atm_oi = f"{int(tot_oi):,}"
-                max_c, max_p = 0, 0
+                idx = (chain.calls['strike'] - curr_price).abs().idxmin()
+                strike_atm = chain.calls.loc[idx, 'strike']
+                tot_atm_oi = chain.calls[chain.calls['strike']==strike_atm]['openInterest'].sum() + \
+                             chain.puts[chain.puts['strike']==strike_atm]['openInterest'].sum()
+                atm_oi = f"{int(tot_atm_oi):,}"
+                
+                if tot_atm_oi < 1000: # 稍微放寬這裡的檢查
+                     return reject(f"期權流動性不足 OI={tot_atm_oi}")
+
+                # 2. 累積全期限 OI (掃描前 6 個月/週)
                 for d in opts[:6]:
                     try:
                         ch = stock.option_chain(d)
+                        # 累積 Call
                         if not ch.calls.empty:
-                            r = ch.calls.loc[ch.calls['openInterest'].idxmax()]
-                            if r['openInterest'] > max_c: max_c = r['openInterest']; c_max = r['strike']
+                            for _, row in ch.calls.iterrows():
+                                k = row['strike']
+                                v = row['openInterest']
+                                call_oi_map[k] = call_oi_map.get(k, 0) + (v if v else 0)
+                        # 累積 Put
                         if not ch.puts.empty:
-                            r = ch.puts.loc[ch.puts['openInterest'].idxmax()]
-                            if r['openInterest'] > max_p: max_p = r['openInterest']; p_max = r['strike']
+                            for _, row in ch.puts.iterrows():
+                                k = row['strike']
+                                v = row['openInterest']
+                                put_oi_map[k] = put_oi_map.get(k, 0) + (v if v else 0)
                     except: continue
+                
+                # 3. 找出累積後的最大量價位
+                if call_oi_map:
+                    c_max_strike = max(call_oi_map, key=call_oi_map.get)
+                if put_oi_map:
+                    p_max_strike = max(put_oi_map, key=put_oi_map.get)
+                    
         except: pass
-
-        if tot_oi < 2000: return reject(f"期權流動性不足 OI={tot_oi}")
 
         earnings = "未知"
         if stock.calendar and 'Earnings Date' in stock.calendar:
@@ -444,10 +466,10 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
         return {
             "type": "success",
             "代號": symbol, "HV Rank": round(hv_rank_val,1), "週波動%": box_amp_str, "預期變動$": box_str,
-            "現價": round(df_daily_2y['Close'].iloc[-1],2), 
+            "現價": round(curr_price,2), 
             "4H 60MA": round(ma60_4h_val,2) if ma60_4h_val!=0 else "N/A",
             "4H MA60 乖離率": f"{round(dist_pct_val,2)}%" if ma60_4h_val!=0 else "N/A",
-            "價平OI": atm_oi, "全Call大量": c_max, "全Put大量": p_max,
+            "價平OI": atm_oi, "全Call大量": c_max_strike, "全Put大量": p_max_strike,
             "產業": translate_industry(stock.info.get('industry','N/A')), "下次財報": earnings,
             "題材搜尋": f"https://www.google.com/search?q={symbol}+題材+風險",
             "_sort_score": 99999 if s['enable_box_breakout'] else -abs(dist_pct_val),
@@ -534,3 +556,4 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             row = df[df['代號'] == target].iloc[0]
             plot_interactive_chart(target, row['全Call大量'], row['全Put大量'], row.get('_vcp_weeks', 0))
     else: st.write("查無標的")
+
