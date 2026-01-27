@@ -194,43 +194,39 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (4H 完美拖曳版 + 標籤左右分流) ---
+# --- 5. 繪圖函數 (4H 拖曳版 + 標籤上下分流) ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kwargs):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     
-    # 【優化 1】手機 Layout：圖例背景透明，右側邊距適中
+    # 手機 Layout: 圖例透明, 右側適中
     layout_common = dict(
         xaxis_rangeslider_visible=False, 
         height=500, 
         margin=dict(l=0, r=60, t=30, b=20), 
-        legend=dict(
-            orientation="h", 
-            y=0.99, x=0.01, 
-            bgcolor="rgba(0,0,0,0)" # 圖例背景全透明
-        ), 
+        legend=dict(orientation="h", y=0.99, x=0.01, bgcolor="rgba(0,0,0,0)"), 
         dragmode='pan'
     )
     
     box_shapes = []
     is_box_mode = st.session_state.get('box_mode_key', False)
     
-    # 【優化 2】Call/Put 標籤分流：Put 在左，Call 在右，徹底防止重疊
+    # 【優化】Call/Put 上下分流邏輯
     def get_wall_shapes_annotations(cw, pw):
         sh, an = [], []
         if cw and cw != "N/A":
             try:
                 p = float(cw)
-                # Call (紅色) 放在右側
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#FF6347", width=1, dash="dash")))
+                # Call: yanchor="bottom" -> 文字在線的上方
                 an.append(dict(xref="paper", x=0.99, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="right", yanchor="bottom", font=dict(color="#FF6347", size=11)))
             except: pass
         if pw and pw != "N/A":
             try:
                 p = float(pw)
-                # Put (綠色) 放在左側
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#3CB371", width=1, dash="dash")))
-                an.append(dict(xref="paper", x=0.01, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", font=dict(color="#3CB371", size=11)))
+                # Put: yanchor="top" -> 文字在線的下方
+                an.append(dict(xref="paper", x=0.99, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="right", yanchor="top", font=dict(color="#3CB371", size=11)))
             except: pass
         return sh, an
 
@@ -267,7 +263,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"日線圖錯誤: {e}")
 
-    with tab3: # 4H (特別優化版)
+    with tab3: # 4H (優化版：整數索引+拖曳)
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
@@ -275,42 +271,18 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 df['MA60'] = df['Close'].rolling(60).mean()
                 df['d_str'] = df.index.strftime('%m-%d %H:%M')
                 
-                # 【優化 3 & 4】使用整數索引 (Integer Index) 取代字串索引
-                # 這能解決：1. 神秘橫線 (因為資料變成連續數字) 2. 無法拖曳 (整數軸可以自由平移)
-                df = df.reset_index(drop=True)
+                df = df.reset_index(drop=True) # 使用整數索引以消除橫線並允許拖曳
                 
                 fig = go.Figure([
-                    go.Candlestick(
-                        x=df.index, # 使用 0, 1, 2...
-                        open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], 
-                        name='4H K'
-                    ),
-                    go.Scatter(
-                        x=df.index, 
-                        y=df['MA60'], 
-                        mode='lines', name='MA60', 
-                        line=dict(color='orange', width=2)
-                    )
+                    go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
+                    go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))
                 ])
                 
-                # 重新映射 X 軸標籤 (讓 0, 1, 2 顯示為日期)
-                tick_vals = np.arange(0, len(df), max(1, len(df)//6)) # 只顯示 6 個標籤避免擁擠
+                tick_vals = np.arange(0, len(df), max(1, len(df)//6))
                 tick_text = [df['d_str'].iloc[i] for i in tick_vals]
                 
-                fig.update_layout(
-                    title=f"  {symbol} 4H", 
-                    shapes=shapes_common, 
-                    annotations=annotations_common, 
-                    **layout_common
-                )
-                
-                # 設定 X 軸映射與預設範圍 (最近 160 根)
-                fig.update_xaxes(
-                    tickmode='array',
-                    tickvals=tick_vals,
-                    ticktext=tick_text,
-                    range=[max(0, len(df)-160), len(df)+5] # +5 留點右邊空間
-                )
+                fig.update_layout(title=f"  {symbol} 4H", shapes=shapes_common, annotations=annotations_common, **layout_common)
+                fig.update_xaxes(tickmode='array', tickvals=tick_vals, ticktext=tick_text, range=[max(0, len(df)-160), len(df)+5])
                 
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"4H 圖錯誤: {e}")
