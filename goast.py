@@ -11,7 +11,7 @@ from datetime import datetime
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="幽靈策略掃描器 (2026)", page_icon="👻", layout="wide")
 
-# 初始化 Session State (確保變數存在)
+# 初始化 Session State
 if 'scan_limit' not in st.session_state: st.session_state.scan_limit = 600 
 if 'min_vol_m' not in st.session_state: st.session_state.min_vol_m = 10
 if 'dist_threshold' not in st.session_state: st.session_state.dist_threshold = 8.0
@@ -60,69 +60,55 @@ def sync_logic_state():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (完整詳細版回歸) ---
+# --- 2. 核心策略導引區 ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
-    
     with col_step1:
         st.markdown("### 第一步：建立試探部位 (Rule 1)")
         st.markdown("""
         **🚀 啟動時機**
         放量突破關鍵壓力或回測支撐成功時。
-
         **動作**
         買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
-
         **成功指標**
         股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
-
         **❌ 失敗判定**
         2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
         """)
-        
     with col_step2:
         st.markdown("### 第二步：動能加碼 (Rule 2)")
         st.markdown("""
         **🚀 啟動時機**
         當價差已產生「浮盈」，且股價衝向賣出價位時。
-
         **動作**
         加買 **更高一階的 Call**。
-
         **成功指標**
         IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
-
         **❌ 失敗判定**
         動能衰竭或 IV 下降（冰塊融化）。
         """)
-        
     with col_step3:
         st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
         st.markdown("""
         **🚀 啟動時機**
         股價強勢漲破加碼價，且市場出現過熱訊號時。
-
         **動作**
         **再加賣一張中間價位的 Call** (總計賣出兩張)。
-
         **成功指標**
         型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
-
         **❌ 失敗判定**
         爆量不漲或價格遠超最高階。
         """)
-
     st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
 
 st.markdown("---")
 
-# --- 3. 側邊欄 (UI 優化 + 警告修復) ---
+# --- 3. 側邊欄 ---
 st.sidebar.header("🎯 1. 市場設定")
 col_m1, col_m2 = st.sidebar.columns([1.5, 1])
 with col_m1:
     market_choice = st.radio("選擇市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2, label_visibility="collapsed")
 with col_m2:
-    # 移除 value 參數，避免 Session State 警告
     scan_limit = st.number_input("掃描數", min_value=10, max_value=600, step=50, key='scan_limit')
 
 debug_mode = st.sidebar.checkbox("🐞 除錯模式", value=True, help="顯示詳細的失敗原因表格")
@@ -169,7 +155,6 @@ if enable_u_logic:
         settings['spoon_vertex_range'] = st.slider("底部位置 (%)", 0, 100, (50, 95), 5)
         
         st.markdown("---")
-        # 移除 value 參數，避免 Session State 警告
         settings['u_sensitivity'] = st.slider("U型敏感度 (Lookback)", 20, 240, key='u_sensitivity')
         settings['min_curvature'] = st.slider("最小彎曲度 (Curvature)", 0.0, 0.1, 0.003, format="%.3f")
 else: 
@@ -195,9 +180,7 @@ settings['ignition_mode'] = ignition_mode
 with st.sidebar.expander("⚙️ 進階參數 (波動率/成交量/效能)", expanded=False):
     st.caption("調整基礎過濾門檻")
     settings['hv_threshold'] = st.slider("HV Rank 上限", 10, 100, 30)
-    # 移除 value 參數
     min_vol_m = st.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
-    # 移除 value 參數
     dist_threshold = st.slider("距離 4H MA60 容許範圍 (%)", 0.0, 50.0, step=0.5, key='dist_threshold')
     settings['dist_threshold'] = dist_threshold
     st.markdown("---")
@@ -211,37 +194,43 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (修復：Close 大寫 + 手機 Layout + 防止參數報錯) ---
+# --- 5. 繪圖函數 (4H 完美拖曳版 + 標籤左右分流) ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kwargs):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
     
-    # 手機優化 Layout
-    layout = dict(
+    # 【優化 1】手機 Layout：圖例背景透明，右側邊距適中
+    layout_common = dict(
         xaxis_rangeslider_visible=False, 
         height=500, 
-        margin=dict(l=0, r=40, t=30, b=20), 
-        legend=dict(orientation="h", y=0.99, x=0.01, bgcolor="rgba(255,255,255,0.6)"), 
+        margin=dict(l=0, r=60, t=30, b=20), 
+        legend=dict(
+            orientation="h", 
+            y=0.99, x=0.01, 
+            bgcolor="rgba(0,0,0,0)" # 圖例背景全透明
+        ), 
         dragmode='pan'
     )
     
     box_shapes = []
     is_box_mode = st.session_state.get('box_mode_key', False)
     
-    # 標籤內縮版
+    # 【優化 2】Call/Put 標籤分流：Put 在左，Call 在右，徹底防止重疊
     def get_wall_shapes_annotations(cw, pw):
         sh, an = [], []
         if cw and cw != "N/A":
             try:
                 p = float(cw)
+                # Call (紅色) 放在右側
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#FF6347", width=1, dash="dash")))
                 an.append(dict(xref="paper", x=0.99, y=p, text=f"🔥 Call {p}", showarrow=False, xanchor="right", yanchor="bottom", font=dict(color="#FF6347", size=11)))
             except: pass
         if pw and pw != "N/A":
             try:
                 p = float(pw)
+                # Put (綠色) 放在左側
                 sh.append(dict(type="line", x0=0, x1=1, xref="paper", y0=p, y1=p, line=dict(color="#3CB371", width=1, dash="dash")))
-                an.append(dict(xref="paper", x=0.99, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="right", yanchor="top", font=dict(color="#3CB371", size=11)))
+                an.append(dict(xref="paper", x=0.01, y=p, text=f"🛡️ Put {p}", showarrow=False, xanchor="left", yanchor="top", font=dict(color="#3CB371", size=11)))
             except: pass
         return sh, an
 
@@ -251,9 +240,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
         try:
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
-                # 【修復】改為大寫 Close
                 df['MA60'] = df['Close'].rolling(60).mean()
-                
                 if is_box_mode and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
                     last_n = df.iloc[-(vcp_weeks+1):-1]
                     if len(last_n) > 0:
@@ -261,12 +248,9 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                             type="rect", x0=last_n.index[0], y0=last_n['Low'].min(), x1=last_n.index[-1], y1=last_n['High'].max(), 
                             line=dict(width=0), fillcolor="rgba(30, 144, 255, 0.25)"
                         ))
-
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
-                
-                all_shapes = shapes_common + box_shapes
-                fig.update_layout(title=f"  {symbol} 周線", shapes=all_shapes, annotations=annotations_common, **layout)
+                fig.update_layout(title=f"  {symbol} 周線", shapes=shapes_common + box_shapes, annotations=annotations_common, **layout_common)
                 if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"周線圖錯誤: {e}")
@@ -278,26 +262,61 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 df['MA60'] = df['Close'].rolling(60).mean()
                 fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                                  go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
-                fig.update_layout(title=f"  {symbol} 日線", shapes=shapes_common, annotations=annotations_common, **layout)
+                fig.update_layout(title=f"  {symbol} 日線", shapes=shapes_common, annotations=annotations_common, **layout_common)
                 if len(df) > 200: fig.update_xaxes(range=[df.index[-200], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"日線圖錯誤: {e}")
 
-    with tab3: # 4H
+    with tab3: # 4H (特別優化版)
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
                 df = df_1h.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
-                df['MA60'] = df['Close'].rolling(60).mean(); df['d_str'] = df.index.strftime('%m-%d %H:%M')
-                fig = go.Figure([go.Candlestick(x=df['d_str'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='4H K'),
-                                 go.Scatter(x=df['d_str'], y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
-                fig.update_layout(title=f"  {symbol} 4H", shapes=shapes_common, annotations=annotations_common, **layout)
+                df['MA60'] = df['Close'].rolling(60).mean()
+                df['d_str'] = df.index.strftime('%m-%d %H:%M')
+                
+                # 【優化 3 & 4】使用整數索引 (Integer Index) 取代字串索引
+                # 這能解決：1. 神秘橫線 (因為資料變成連續數字) 2. 無法拖曳 (整數軸可以自由平移)
+                df = df.reset_index(drop=True)
+                
+                fig = go.Figure([
+                    go.Candlestick(
+                        x=df.index, # 使用 0, 1, 2...
+                        open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], 
+                        name='4H K'
+                    ),
+                    go.Scatter(
+                        x=df.index, 
+                        y=df['MA60'], 
+                        mode='lines', name='MA60', 
+                        line=dict(color='orange', width=2)
+                    )
+                ])
+                
+                # 重新映射 X 軸標籤 (讓 0, 1, 2 顯示為日期)
+                tick_vals = np.arange(0, len(df), max(1, len(df)//6)) # 只顯示 6 個標籤避免擁擠
+                tick_text = [df['d_str'].iloc[i] for i in tick_vals]
+                
+                fig.update_layout(
+                    title=f"  {symbol} 4H", 
+                    shapes=shapes_common, 
+                    annotations=annotations_common, 
+                    **layout_common
+                )
+                
+                # 設定 X 軸映射與預設範圍 (最近 160 根)
+                fig.update_xaxes(
+                    tickmode='array',
+                    tickvals=tick_vals,
+                    ticktext=tick_text,
+                    range=[max(0, len(df)-160), len(df)+5] # +5 留點右邊空間
+                )
+                
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"4H 圖錯誤: {e}")
 
-# --- 6. 核心運算 (表格化錯誤回傳) ---
+# --- 6. 核心運算 ---
 def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
-    # 回傳字典，後續轉表格
     def reject(reason): 
         return {"type": "error", "代號": symbol, "原因": reason} if debug else None
 
@@ -494,7 +513,6 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.write(f"✅ 已獲得 {len(tickers)} 檔代號，開始過濾...")
         results = []; count = 0; progress = st.progress(0)
         
-        # 除錯模式下單核心執行，確保不卡頓
         workers = 1 if debug_mode else max_workers
         
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -509,14 +527,12 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
                     data.pop("type")
                     results.append(data)
                 elif data and data.get("type") == "error":
-                    error_list.append(data)
+                    error_list.append({"代號": data["代號"], "原因": data["原因"]})
 
-        # 【優化】掃描結束後，統一顯示錯誤表格
         if debug_mode and error_list:
             status.markdown("---")
             status.warning(f"📉 **篩選失敗清單 (共 {len(error_list)} 檔)**")
-            # 轉換為 DataFrame 並只顯示代號與原因
-            err_df = pd.DataFrame(error_list)[["代號", "原因"]]
+            err_df = pd.DataFrame(error_list)
             status.dataframe(err_df, height=300, use_container_width=True, hide_index=True)
 
         st.session_state['scan_results'] = results
@@ -526,7 +542,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank")
     st.subheader("📋 策略篩選列表")
     
-    # 建立連結專用表
     df_display = df.copy()
     df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
 
@@ -539,7 +554,6 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     st.markdown("---")
     st.subheader("🕯️ K 線檢視")
     
-    # 使用原始 df 確保 plot 函數能吃到純代號
     options = df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist()
     if options:
         sel = st.pills("👉 點擊標的", options, selection_mode="single")
