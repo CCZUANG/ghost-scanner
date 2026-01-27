@@ -116,72 +116,96 @@ with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳�
 
 st.markdown("---")
 
-# --- 3. 側邊欄 ---
-st.sidebar.header("🎯 市場與數量")
-market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
-scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
-debug_mode = st.sidebar.checkbox("🐞 啟動除錯模式 (顯示失敗原因)", value=True, help="開啟後會以表格顯示篩選失敗的原因")
+# --- 3. 側邊欄 (UI 優化版) ---
+st.sidebar.header("🎯 1. 市場設定")
+col_m1, col_m2 = st.sidebar.columns([1.5, 1])
+with col_m1:
+    market_choice = st.radio("選擇市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2, label_visibility="collapsed")
+with col_m2:
+    scan_limit = st.number_input("掃描數", min_value=10, max_value=600, value=st.session_state.scan_limit, step=50, key='scan_limit')
 
+# 除錯模式開關 (縮小體積)
+debug_mode = st.sidebar.checkbox("🐞 除錯模式", value=True, help="顯示詳細的失敗原因表格")
+
+st.sidebar.divider()
+
+# --- 策略設定區 ---
+st.sidebar.subheader("🧠 2. 核心策略")
 settings = {}
 
-st.sidebar.header("📦 箱型突破 (霸道模式)")
-enable_box_breakout = st.sidebar.checkbox("✅ 啟動週線橫盤突破 (忽略其他條件)", value=False, key='box_mode_key', on_change=sync_logic_state)
+# A. 霸道模式 (箱型)
+enable_box_breakout = st.sidebar.checkbox("📦 啟動：箱型/VCP 霸道模式", value=False, key='box_mode_key', on_change=sync_logic_state)
 settings['enable_box_breakout'] = enable_box_breakout
 
 if enable_box_breakout:
-    enable_full_auto_vcp = st.sidebar.checkbox("🤯 全自動 VCP 偵測 (免設定週數)", value=True)
-    settings['enable_full_auto_vcp'] = enable_full_auto_vcp
-    
-    if not enable_full_auto_vcp:
-        box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20)
-        settings['box_weeks'] = box_weeks
-        auto_flag_mode = st.sidebar.checkbox("🤖 自動偵測旗型收斂", value=True)
-        settings['auto_flag_mode'] = auto_flag_mode
-        settings['box_tightness'] = 100 if auto_flag_mode else st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
-    else:
-        st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期")
-        settings['box_weeks'] = 52 
-        settings['auto_flag_mode'] = True
-        settings['box_tightness'] = 100
+    with st.sidebar.container(border=True): # 使用外框強調子設定
+        enable_full_auto_vcp = st.checkbox("🤯 全自動 VCP 偵測", value=True)
+        settings['enable_full_auto_vcp'] = enable_full_auto_vcp
+        
+        if not enable_full_auto_vcp:
+            box_weeks = st.slider("設定盤整週數 (N)", 4, 52, 20)
+            settings['box_weeks'] = box_weeks
+            auto_flag_mode = st.checkbox("🤖 自動偵測旗型", value=True)
+            settings['auto_flag_mode'] = auto_flag_mode
+            settings['box_tightness'] = 100 if auto_flag_mode else st.slider("寬度限制 (%)", 10, 50, 25)
+        else:
+            st.caption("👉 系統將自動尋找最佳週期 (12W~52W)")
+            settings['box_weeks'] = 52 
+            settings['auto_flag_mode'] = True
+            settings['box_tightness'] = 100
 else:
+    # 預設值 (未啟用時)
     settings['enable_full_auto_vcp'] = False
     settings['box_weeks'] = 52
     settings['auto_flag_mode'] = False
     settings['box_tightness'] = 25
 
-st.sidebar.divider()
-st.sidebar.header("📈 幽靈戰法連動")
-enable_u_logic = st.sidebar.checkbox("✅ 啟動 4小時 U型戰法", value=False, key='u_logic_key', on_change=handle_u_logic_toggle)
+# B. 幽靈模式 (U型)
+enable_u_logic = st.sidebar.checkbox("👻 啟動：U型/勺子 幽靈戰法", value=False, key='u_logic_key', on_change=handle_u_logic_toggle)
 settings['enable_u_logic'] = enable_u_logic
 
 if enable_u_logic:
-    st.sidebar.checkbox("🥄 嚴格勺子模式", value=True, key='spoon_strict_key', on_change=handle_spoon_toggle)
-    settings['spoon_strict'] = st.session_state.spoon_strict_key
-    settings['spoon_vertex_range'] = st.sidebar.slider("🥄 勺子底部位置 (%)", 0, 100, (50, 95), 5)
+    with st.sidebar.container(border=True):
+        st.checkbox("🥄 嚴格勺子模式", value=True, key='spoon_strict_key', on_change=handle_spoon_toggle)
+        settings['spoon_strict'] = st.session_state.spoon_strict_key
+        settings['spoon_vertex_range'] = st.slider("底部位置 (%)", 0, 100, (50, 95), 5)
+        
+        # 【優化】將 U 型參數直接移到這裡，就近管理
+        st.markdown("---")
+        settings['u_sensitivity'] = st.slider("U型敏感度 (Lookback)", 20, 240, st.session_state.u_sensitivity, key='u_sensitivity')
+        settings['min_curvature'] = st.slider("最小彎曲度 (Curvature)", 0.0, 0.1, 0.003, format="%.3f")
 else: 
     settings['spoon_strict'] = False
     settings['spoon_vertex_range'] = (50, 95)
-
-st.sidebar.header("🛡️ 趨勢與點火")
-settings['check_daily_ma60_up'] = st.sidebar.checkbox("✅ 日線 60MA 向上", value=True)
-settings['check_ma60_strong_trend'] = st.sidebar.checkbox("✅ 週線 MA60 強勢趨勢", value=True)
-settings['check_price_above_daily_ma60'] = st.sidebar.checkbox("✅ 股價 > 日線 60MA", value=True)
-ignition_mode = st.sidebar.radio("動能點火週期:", ["🚫 不啟用", "⚡ 4H 點火", "🚀 週線點火"], index=0, key="ignition_mode_key", on_change=sync_logic_state)
-settings['ignition_mode'] = ignition_mode
-
-st.sidebar.header("⚙️ 基礎篩選")
-settings['hv_threshold'] = st.sidebar.slider("HV Rank 門檻", 10, 100, 30)
-min_vol_m = st.sidebar.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
-dist_threshold = st.sidebar.slider("距離 4H MA60 範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
-settings['dist_threshold'] = dist_threshold
-
-if enable_u_logic:
-    settings['u_sensitivity'] = st.sidebar.slider("U型敏感度", 20, 240, key='u_sensitivity')
-    settings['min_curvature'] = st.sidebar.slider("最小彎曲度", 0.0, 0.1, 0.003, format="%.3f")
-else: 
     settings['u_sensitivity'] = 30
     settings['min_curvature'] = 0.003
-max_workers = st.sidebar.slider("🚀 平行核心數", 1, 32, 16)
+
+st.sidebar.divider()
+
+# --- 濾網與進階設定 ---
+st.sidebar.subheader("🛡️ 3. 趨勢與濾網")
+
+# 趨勢濾網
+col_t1, col_t2 = st.sidebar.columns(2)
+with col_t1:
+    settings['check_daily_ma60_up'] = st.checkbox("日60MA向上", value=True)
+    settings['check_price_above_daily_ma60'] = st.checkbox("股價 > 日MA", value=True)
+with col_t2:
+    settings['check_ma60_strong_trend'] = st.checkbox("週趨勢強勢", value=True)
+
+# 點火模式
+ignition_mode = st.sidebar.radio("動能點火週期:", ["🚫 不啟用", "⚡ 4H 點火", "🚀 週線點火"], index=0, horizontal=True, key="ignition_mode_key", on_change=sync_logic_state)
+settings['ignition_mode'] = ignition_mode
+
+# 【優化】將不常用的參數收入 "進階設定"
+with st.sidebar.expander("⚙️ 進階參數 (波動率/成交量/效能)", expanded=False):
+    st.caption("調整基礎過濾門檻")
+    settings['hv_threshold'] = st.slider("HV Rank 上限", 10, 100, 30)
+    min_vol_m = st.slider("最小日均量 (百萬股)", 1, 100, key='min_vol_m') 
+    dist_threshold = st.slider("距離 4H MA60 容許範圍 (%)", 0.0, 50.0, key='dist_threshold', step=0.5)
+    settings['dist_threshold'] = dist_threshold
+    st.markdown("---")
+    max_workers = st.slider("🚀 平行運算核心數", 1, 32, 16, help="數字越大掃描越快，但電腦負載越高")
 
 # --- 4. 產業翻譯 ---
 def translate_industry(eng):
@@ -521,3 +545,4 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             row = df[df['代號'] == target].iloc[0]
             plot_interactive_chart(target, row['全Call大量'], row['全Put大量'], row.get('_vcp_weeks', 0))
     else: st.write("查無標的")
+
