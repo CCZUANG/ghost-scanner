@@ -60,16 +60,59 @@ def sync_logic_state():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (確保縮排正確) ---
+# --- 2. 核心策略導引區 (詳細完整版) ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
+    
     with col_step1:
-        st.markdown("### 第一步：建立試探部位 (Rule 1)\n**🚀 啟動時機**：放量突破關鍵壓力。\n**動作**：買低 Call + 賣高 Call。")
+        st.markdown("### 第一步：建立試探部位 (Rule 1)")
+        st.markdown("""
+        **🚀 啟動時機**
+        放量突破關鍵壓力或回測支撐成功時。
+
+        **動作**
+        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
+
+        **成功指標**
+        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
+
+        **❌ 失敗判定**
+        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
+        """)
+        
     with col_step2:
-        st.markdown("### 第二步：動能加碼 (Rule 2)\n**🚀 啟動時機**：浮盈且 IV 擴張。\n**動作**：加買更高一階 Call。")
+        st.markdown("### 第二步：動能加碼 (Rule 2)")
+        st.markdown("""
+        **🚀 啟動時機**
+        當價差已產生「浮盈」，且股價衝向賣出價位時。
+
+        **動作**
+        加買 **更高一階的 Call**。
+
+        **成功指標**
+        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
+
+        **❌ 失敗判定**
+        動能衰竭或 IV 下降（冰塊融化）。
+        """)
+        
     with col_step3:
-        st.markdown("### 第三步：轉化蝴蝶 (退出方案)\n**🚀 啟動時機**：過熱訊號出現。\n**動作**：賣出中間價位 Call 鎖定成本。")
-    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。")
+        st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
+        st.markdown("""
+        **🚀 啟動時機**
+        股價強勢漲破加碼價，且市場出現過熱訊號時。
+
+        **動作**
+        **再加賣一張中間價位的 Call** (總計賣出兩張)。
+
+        **成功指標**
+        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
+
+        **❌ 失敗判定**
+        爆量不漲或價格遠超最高階。
+        """)
+
+    st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
 
 st.markdown("---")
 
@@ -77,24 +120,26 @@ st.markdown("---")
 st.sidebar.header("🎯 市場與數量")
 market_choice = st.sidebar.radio("市場", ["S&P 500", "NASDAQ 100", "🔥 全火力"], index=2)
 scan_limit = st.sidebar.slider("掃描數量", 50, 600, key='scan_limit')
-debug_mode = st.sidebar.checkbox("🐞 啟動除錯模式 (顯示錯誤)", value=False)
+debug_mode = st.sidebar.checkbox("🐞 啟動除錯模式 (顯示失敗原因)", value=True, help="開啟後會以表格顯示篩選失敗的原因")
 
 settings = {}
 
 st.sidebar.header("📦 箱型突破 (霸道模式)")
-enable_box_breakout = st.sidebar.checkbox("✅ 啟動週線橫盤突破", value=False, key='box_mode_key', on_change=sync_logic_state)
+enable_box_breakout = st.sidebar.checkbox("✅ 啟動週線橫盤突破 (忽略其他條件)", value=False, key='box_mode_key', on_change=sync_logic_state)
 settings['enable_box_breakout'] = enable_box_breakout
 
 if enable_box_breakout:
-    enable_full_auto_vcp = st.sidebar.checkbox("🤯 全自動 VCP 偵測", value=True)
+    enable_full_auto_vcp = st.sidebar.checkbox("🤯 全自動 VCP 偵測 (免設定週數)", value=True)
     settings['enable_full_auto_vcp'] = enable_full_auto_vcp
+    
     if not enable_full_auto_vcp:
         box_weeks = st.sidebar.slider("設定盤整週數 (N)", 4, 52, 20)
         settings['box_weeks'] = box_weeks
-        auto_flag_mode = st.sidebar.checkbox("🤖 自動偵測旗型", value=True)
+        auto_flag_mode = st.sidebar.checkbox("🤖 自動偵測旗型收斂", value=True)
         settings['auto_flag_mode'] = auto_flag_mode
-        settings['box_tightness'] = 100 if auto_flag_mode else st.sidebar.slider("寬度限制 (%)", 10, 50, 25)
+        settings['box_tightness'] = 100 if auto_flag_mode else st.sidebar.slider("盤整區間寬度限制 (%)", 10, 50, 25)
     else:
+        st.sidebar.caption("👉 系統將自動尋找最佳的收斂突破週期")
         settings['box_weeks'] = 52 
         settings['auto_flag_mode'] = True
         settings['box_tightness'] = 100
@@ -146,7 +191,7 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (修復：加入 *args 防止參數報錯, 修正 Close 大寫) ---
+# --- 5. 繪圖函數 (修正：*args + Close 大寫 + 手機 Layout) ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
@@ -185,7 +230,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args):
         try:
             df = stock.history(period="max", interval="1wk")
             if len(df) > 0:
-                # 【修復】這裡改為大寫 'Close'，防止報錯
+                # 【修正】這裡確保使用 Capital 'Close'
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
                 if is_box_mode and vcp_weeks > 0 and len(df) >= vcp_weeks + 1:
@@ -229,9 +274,11 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args):
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"4H 圖錯誤: {e}")
 
-# --- 6. 核心運算 ---
+# --- 6. 核心運算 (回傳結構化錯誤訊息) ---
 def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
-    def reject(msg): return f"📉 {symbol}: {msg}" if debug else None
+    # 回傳字典格式的錯誤，方便後續轉成 DataFrame
+    def reject(reason): 
+        return {"type": "error", "symbol": symbol, "reason": reason} if debug else None
 
     try:
         stock = yf.Ticker(symbol)
@@ -251,7 +298,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             if len(df_wk) < 15: return reject("週線資料不足")
             
             avg_vol = df_wk['Volume'].tail(10).mean()
-            if avg_vol < vol_threshold * 2: return reject(f"週均量不足 (需 > {vol_threshold*2})")
+            if avg_vol < vol_threshold * 2: return reject(f"週均量不足 (需 > {int(vol_threshold*2)})")
             
             candidate_periods = [52, 40, 30, 20, 12] if s['enable_full_auto_vcp'] else [s['box_weeks']]
             found_vcp = False
@@ -383,6 +430,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             earnings = stock.calendar['Earnings Date'][0].strftime('%m-%d')
 
         return {
+            "type": "success",
             "代號": symbol, "HV Rank": round(hv_rank_val,1), "週波動%": box_amp_str, "預期變動$": box_str,
             "現價": round(df_daily_2y['Close'].iloc[-1],2), 
             "4H 60MA": round(ma60_4h_val,2) if ma60_4h_val!=0 else "N/A",
@@ -394,7 +442,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             "_vcp_weeks": final_box_weeks
         }
     except Exception as e:
-        return f"💥 {symbol} 程式錯誤: {str(e)}" if debug else None
+        return reject(f"程式錯誤: {str(e)}")
 
 # --- 7. 抓取代號 ---
 @st.cache_data(ttl=3600)
@@ -413,12 +461,12 @@ def get_tickers_robust(choice):
             return list(set(t1 + t2))
     except: return ["AAPL","NVDA","TSLA","AMD","MSFT","GOOG","AMZN","META"]
 
-# --- 8. 主程式 (確保縮排正確，防止按鈕消失) ---
+# --- 8. 主程式 (除錯訊息表格化) ---
 if st.button("🚀 啟動 Turbo 掃描", type="primary"):
     st.session_state['scan_results'] = None
     status_text = "🔍 掃描中..."
     
-    debug_logs = []
+    error_list = [] # 用來收集錯誤的列表
 
     with st.status(status_text, expanded=True) as status:
         tickers = get_tickers_robust(market_choice)[:scan_limit]
@@ -435,16 +483,19 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
                 count += 1
                 progress.progress(count / len(tickers))
                 
-                if isinstance(data, dict):
+                if data and data.get("type") == "success":
+                    # 移除 type 欄位後加入結果
+                    data.pop("type")
                     results.append(data)
-                elif isinstance(data, str) and debug_mode:
-                    debug_logs.append(data)
-                    if len(debug_logs) > 5:
-                        for log in debug_logs: status.write(log)
-                        debug_logs = []
-        
-        if debug_mode and debug_logs:
-            for log in debug_logs: status.write(log)
+                elif data and data.get("type") == "error":
+                    # 收集錯誤，稍後統一顯示
+                    error_list.append({"代號": data["symbol"], "原因": data["reason"]})
+
+        # 【優化】掃描結束後，如果有錯誤，統一用表格顯示在 Status 裡
+        if debug_mode and error_list:
+            st.write("📉 **篩選失敗清單 (可捲動查看)**")
+            err_df = pd.DataFrame(error_list)
+            st.dataframe(err_df, height=300, use_container_width=True)
 
         st.session_state['scan_results'] = results
         status.update(label=f"完成！共 {len(results)} 檔。", state="complete", expanded=False)
@@ -467,6 +518,5 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
         if sel:
             target = sel.split(" - ")[0]
             row = df[df['代號'] == target].iloc[0]
-            # 加入 *args 防止參數錯誤
             plot_interactive_chart(target, row['全Call大量'], row['全Put大量'], row.get('_vcp_weeks', 0))
     else: st.write("查無標的")
