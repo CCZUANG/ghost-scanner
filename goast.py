@@ -60,58 +60,45 @@ def sync_logic_state():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (修復：恢復詳細完整版排版) ---
+# --- 2. 核心策略導引區 ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
-    
     with col_step1:
         st.markdown("### 第一步：建立試探部位 (Rule 1)")
         st.markdown("""
         **🚀 啟動時機**
         放量突破關鍵壓力或回測支撐成功時。
-
         **動作**
         買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
-
         **成功指標**
         股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
-
         **❌ 失敗判定**
         2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
         """)
-        
     with col_step2:
         st.markdown("### 第二步：動能加碼 (Rule 2)")
         st.markdown("""
         **🚀 啟動時機**
         當價差已產生「浮盈」，且股價衝向賣出價位時。
-
         **動作**
         加買 **更高一階的 Call**。
-
         **成功指標**
         IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
-
         **❌ 失敗判定**
         動能衰竭或 IV 下降（冰塊融化）。
         """)
-        
     with col_step3:
         st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
         st.markdown("""
         **🚀 啟動時機**
         股價強勢漲破加碼價，且市場出現過熱訊號時。
-
         **動作**
         **再加賣一張中間價位的 Call** (總計賣出兩張)。
-
         **成功指標**
         型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
-
         **❌ 失敗判定**
         爆量不漲或價格遠超最高階。
         """)
-
     st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
 
 st.markdown("---")
@@ -301,6 +288,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
         ma60_4h_val, dist_pct_val = 0, 0
         final_box_weeks = 0 
         ma5_cross_days_str = None
+        ma5_cross_days_val = 999 # 【新增】預設排序值 (一般模式放後面)
 
         # --- A. 霸道模式 (箱型) ---
         if s['enable_box_breakout']:
@@ -335,7 +323,6 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             
             if not found_vcp: return reject("不符合 VCP/箱型型態")
             
-            # 【修復】這裡補上 4H 資料抓取，讓列表顯示數值
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -372,13 +359,13 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             if days_since_cross == -1:
                 return reject("未在最近 15 天內發現黃金交叉點")
             
+            ma5_cross_days_val = days_since_cross # 【新增】儲存數值用於排序
             ma5_cross_days_str = f"已突破 {days_since_cross} 天" if days_since_cross > 0 else "剛突破"
             
             week_vol = log_ret.tail(5).std()*np.sqrt(5)*100 if len(log_ret)>=5 else 0
             box_str = f"±{round(curr_price*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
 
-            # 【修復】這裡補上 4H 資料抓取，讓列表顯示數值
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -437,7 +424,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             box_str = f"±{round(df_daily_2y['Close'].iloc[-1]*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
 
-        # --- 期權運算 ---
+        # --- 期權運算 (累積加總) ---
         atm_oi = "N/A"; c_max_strike = "N/A"; p_max_strike = "N/A"
         call_oi_map = {}; put_oi_map = {}
         try:
@@ -478,6 +465,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             "代號": symbol, "HV Rank": round(hv_rank_val,1), 
             "週波動%": box_amp_str, "預期變動$": box_str,
             "MA5突破天數": ma5_cross_days_str, 
+            "_ma5_days": ma5_cross_days_val, # 【新增】排序用欄位
             "現價": round(curr_price,2), 
             "4H 60MA": round(ma60_4h_val,2) if ma60_4h_val!=0 else "N/A",
             "4H MA60 乖離率": f"{round(dist_pct_val,2)}%" if ma60_4h_val!=0 else "N/A",
@@ -545,7 +533,15 @@ if st.button("🚀 啟動 Turbo 掃描", type="primary"):
         status.update(label=f"完成！共 {len(results)} 檔。", state="complete", expanded=False)
 
 if 'scan_results' in st.session_state and st.session_state['scan_results']:
-    df = pd.DataFrame(st.session_state['scan_results']).sort_values(by="HV Rank")
+    df = pd.DataFrame(st.session_state['scan_results'])
+    
+    # 【新增】排序邏輯：如果是落水狗模式，使用天數排序；否則用 HV Rank
+    if settings.get('enable_reversal_mode'):
+        if "_ma5_days" in df.columns:
+            df = df.sort_values(by="_ma5_days", ascending=True)
+    else:
+        df = df.sort_values(by="HV Rank")
+
     st.subheader("📋 策略篩選列表")
     
     df_display = df.copy()
@@ -554,7 +550,7 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     st.dataframe(df_display, column_config={
         "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"),
         "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍"),
-        "_sort_score": None, "_vcp_weeks": None
+        "_sort_score": None, "_vcp_weeks": None, "_ma5_days": None # 隱藏排序用欄位
     }, hide_index=True, use_container_width=True)
     
     st.markdown("---")
