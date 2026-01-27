@@ -272,31 +272,44 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0):
                 st.plotly_chart(fig, use_container_width=True)
         except: st.error("4H 載入失敗")
 
-# --- 6. 核心運算 ---
+# --- 6. 核心運算 (除錯 Debug 版) ---
 def get_ghost_metrics(symbol, vol_threshold, s):
+    # 使用 try-except 包過，確保發生錯誤時能印出原因
     try:
         stock = yf.Ticker(symbol)
-        df_daily_2y = stock.history(period="2y", interval="1d")
-        if len(df_daily_2y) < 250: return None
         
+        # 1. 抓取日線資料 (2年)
+        df_daily_2y = stock.history(period="2y", interval="1d")
+        
+        if df_daily_2y.empty:
+            print(f"❌ {symbol}: 無法抓取日線資料 (Empty Data)")
+            return None
+        if len(df_daily_2y) < 250:
+            print(f"❌ {symbol}: 資料長度不足 250 天")
+            return None
+        
+        # 2. 基礎波動率運算
         log_ret = np.log(df_daily_2y['Close'] / df_daily_2y['Close'].shift(1))
         vol_30d = log_ret.rolling(30).std() * np.sqrt(252) * 100
         hv_rank_val = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
         ma60_4h_val, dist_pct_val = 0, 0
         final_box_weeks = 0 
 
-        # --- A. 霸道模式 ---
+        # --- A. 霸道模式 (箱型) ---
         if s['enable_box_breakout']:
             df_wk = df_daily_2y.resample('W').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
-            if len(df_wk) < 15: return None
+            if len(df_wk) < 15: 
+                print(f"⚠️ {symbol}: 週線資料不足")
+                return None
             
             avg_vol = df_wk['Volume'].tail(10).mean()
-            if avg_vol < vol_threshold * 2: return None
+            if avg_vol < vol_threshold * 2: 
+                print(f"⚠️ {symbol}: 週均量不足 (需 > {vol_threshold*2})")
+                return None
             
             candidate_periods = [52, 40, 30, 20, 12] if s['enable_full_auto_vcp'] else [s['box_weeks']]
             found_vcp = False
             box_str = ""; box_amp_str = ""
-            
             current_week = df_wk.iloc[-1]
             
             for p in candidate_periods:
@@ -306,7 +319,7 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                 box_low = box_data['Low'].min()
                 if box_low == 0: continue
                 
-                # 自動收斂
+                # 自動收斂 / 手動判斷
                 if s['auto_flag_mode'] or s['enable_full_auto_vcp']:
                     mid = len(box_data)//2
                     old_r = box_data.iloc[:mid]['High'].max() - box_data.iloc[:mid]['Low'].min()
@@ -314,27 +327,25 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                     
                     if old_r == 0: continue
                     if new_r > old_r * 0.85: continue 
-                    
                     if current_week['Close'] < box_high * 0.90: continue 
                     if current_week['Close'] < box_high * 0.98: continue 
                     
-                    found_vcp = True
-                    final_box_weeks = p
-                    box_str = f"突破 {round(box_high, 2)}"
-                    box_amp_str = f"VCP{p}W"
+                    found_vcp = True; final_box_weeks = p
+                    box_str = f"突破 {round(box_high, 2)}"; box_amp_str = f"VCP{p}W"
                     break
                 else: 
                     amp = (box_high - box_low) / box_low * 100
                     if amp > s['box_tightness']: continue
                     if current_week['Close'] >= box_high * 0.99:
-                        found_vcp = True
-                        final_box_weeks = p
-                        box_str = f"突破 {round(box_high, 2)}"
-                        box_amp_str = f"{round(amp,1)}%"
+                        found_vcp = True; final_box_weeks = p
+                        box_str = f"突破 {round(box_high, 2)}"; box_amp_str = f"{round(amp,1)}%"
                         break
             
-            if not found_vcp: return None
+            if not found_vcp: 
+                # print(f"📉 {symbol}: 未符合箱型/VCP型態") # 這行如果太多可以註解掉
+                return None
             
+            # 補 4H 數據 (不影響結果，只為了顯示)
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -344,50 +355,82 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                     dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
             except: pass
 
-        # --- B. 幽靈模式 ---
+        # --- B. 幽靈模式 (非霸道) ---
         else:
             df_1h = stock.history(period="1y", interval="1h")
-            if len(df_1h) < 240: return None
+            if df_1h.empty:
+                print(f"❌ {symbol}: 抓不到 1H 資料")
+                return None
+            if len(df_1h) < 240: 
+                print(f"❌ {symbol}: 1H 資料不足 240 根")
+                return None
+            
             df_daily = df_1h.resample('D').agg({'Volume':'sum','Close':'last'}).dropna()
             df_daily['MA60'] = df_daily['Close'].rolling(60).mean()
             
-            if s['check_daily_ma60_up'] and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: return None
-            if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: return None
-            if s['check_price_above_daily_ma60'] and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: return None
-            if hv_rank_val > s['hv_threshold']: return None
+            # --- 嚴格篩選檢查點 (Debug 重點) ---
+            if s['check_daily_ma60_up'] and df_daily['MA60'].iloc[-1] <= df_daily['MA60'].iloc[-2]: 
+                print(f"📉 {symbol}: 被濾除 (日線 60MA 下彎)") 
+                return None
             
+            if df_daily['Volume'].rolling(20).mean().iloc[-1] < vol_threshold: 
+                print(f"📉 {symbol}: 被濾除 (成交量不足)")
+                return None
+                
+            if s['check_price_above_daily_ma60'] and df_daily['Close'].iloc[-1] < df_daily['MA60'].iloc[-1]: 
+                print(f"📉 {symbol}: 被濾除 (股價 < 日線 60MA)")
+                return None
+            
+            if hv_rank_val > s['hv_threshold']: 
+                print(f"📉 {symbol}: 被濾除 (HV Rank {round(hv_rank_val,1)} > {s['hv_threshold']})")
+                return None
+            
+            # 點火邏輯檢查
             if "週線點火" in s['ignition_mode'] or s['check_ma60_strong_trend']:
                 df_wk = df_daily_2y.resample('W').agg({'Close':'last','High':'max'}).dropna()
                 if s['check_ma60_strong_trend']:
                     ma60_wk = df_wk['Close'].rolling(60).mean()
-                    if len(ma60_wk)>5 and not ma60_wk.tail(5).is_monotonic_increasing: return None
+                    if len(ma60_wk)>5 and not ma60_wk.tail(5).is_monotonic_increasing: 
+                        print(f"📉 {symbol}: 被濾除 (週線 MA60 未向上)")
+                        return None
                 if "週線點火" in s['ignition_mode'] and len(df_wk)>=3:
                     curr = df_daily_2y['Close'].iloc[-1]
-                    last_h = df_wk['High'].iloc[-2]
-                    last_c = df_wk['Close'].iloc[-2]
-                    prev_h = df_wk['High'].iloc[-3]
-                    if not (curr > last_h or last_c > prev_h): return None
+                    last_h = df_wk['High'].iloc[-2]; last_c = df_wk['Close'].iloc[-2]; prev_h = df_wk['High'].iloc[-3]
+                    if not (curr > last_h or last_c > prev_h): 
+                        print(f"📉 {symbol}: 被濾除 (週線未點火)")
+                        return None
 
             df_4h = df_1h.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last'}).dropna()
             df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
             ma60_4h_val = df_4h['MA60'].iloc[-1]
             dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
             
-            if abs(dist_pct_val) > s['dist_threshold']: return None
+            if abs(dist_pct_val) > s['dist_threshold']: 
+                print(f"📉 {symbol}: 被濾除 (乖離率 {round(dist_pct_val,2)}% 超過 {s['dist_threshold']}%)")
+                return None
+            
             if "4H 點火" in s['ignition_mode'] and len(df_4h)>=2:
-                if df_4h['Close'].iloc[-1] <= df_4h['High'].iloc[-2]: return None
+                if df_4h['Close'].iloc[-1] <= df_4h['High'].iloc[-2]: 
+                    print(f"📉 {symbol}: 被濾除 (4H 未點火)")
+                    return None
             
             if s['enable_u_logic']:
                 y = df_4h['MA60'].tail(s['u_sensitivity']).values; x = np.arange(len(y))
-                a, b, c = np.polyfit(x, y, 2)
-                if a <= 0: return None
-                if a < s['min_curvature']: return None
+                try:
+                    a, b, c = np.polyfit(x, y, 2)
+                    if a <= 0: 
+                        print(f"🥄 {symbol}: U型失敗 (開口向下 a={a})")
+                        return None
+                    if a < s['min_curvature']: 
+                        print(f"🥄 {symbol}: U型失敗 (不夠彎 a={a})")
+                        return None
+                except: return None
                 
             week_vol = log_ret.tail(5).std()*np.sqrt(5)*100 if len(log_ret)>=5 else 0
             box_str = f"±{round(df_daily_2y['Close'].iloc[-1]*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
 
-        # --- 期權 ---
+        # --- 期權與回傳 ---
         atm_oi = "N/A"; c_max = "N/A"; p_max = "N/A"; tot_oi = 0
         try:
             opts = stock.options
@@ -412,11 +455,15 @@ def get_ghost_metrics(symbol, vol_threshold, s):
                     except: continue
         except: pass
 
-        if tot_oi < 2000: return None
+        if tot_oi < 2000: 
+            print(f"📉 {symbol}: 被濾除 (期權 OI < 2000)")
+            return None
 
         earnings = "未知"
         if stock.calendar and 'Earnings Date' in stock.calendar:
             earnings = stock.calendar['Earnings Date'][0].strftime('%m-%d')
+            
+        print(f"✅ {symbol} 掃描成功！")
 
         return {
             "代號": symbol, "HV Rank": round(hv_rank_val,1), "週波動%": box_amp_str, "預期變動$": box_str,
@@ -429,8 +476,9 @@ def get_ghost_metrics(symbol, vol_threshold, s):
             "_sort_score": 99999 if s['enable_box_breakout'] else -abs(dist_pct_val),
             "_vcp_weeks": final_box_weeks
         }
-    except: return None
-
+    except Exception as e:
+        print(f"💥 {symbol} 發生未知錯誤: {e}")
+        return None
 # --- 7. 抓取代號 ---
 @st.cache_data(ttl=3600)
 def get_tickers_robust(choice):
@@ -485,3 +533,4 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
             row = df[df['代號'] == target].iloc[0]
             plot_interactive_chart(target, row['全Call大量'], row['全Put大量'], row.get('_vcp_weeks', 0))
     else: st.write("查無標的")
+
