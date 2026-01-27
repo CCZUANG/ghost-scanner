@@ -46,24 +46,72 @@ def handle_spoon_toggle():
         st.session_state.u_sensitivity = 240
 
 def sync_logic_state():
-    # 確保策略互斥或共存的邏輯
-    pass
+    is_box_active = st.session_state.get('box_mode_key', False)
+    ignition_mode = st.session_state.get('ignition_mode_key', "🚫 不啟用")
+    if not is_box_active:
+        if "週線點火" in ignition_mode:
+            if st.session_state.dist_threshold < 50.0:
+                st.session_state.backup['dist_threshold'] = st.session_state.dist_threshold
+                st.session_state.dist_threshold = 50.0
+        else:
+            if st.session_state.dist_threshold == 50.0:
+                st.session_state.dist_threshold = st.session_state.backup.get('dist_threshold', 8.0)
 
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 ---
+# --- 2. 核心策略導引區 (修復：恢復詳細完整版排版) ---
 with st.expander("📖 點擊展開：幽靈策略動態蝴蝶演化步驟 (詳細準則)", expanded=False):
     col_step1, col_step2, col_step3 = st.columns(3)
+    
     with col_step1:
         st.markdown("### 第一步：建立試探部位 (Rule 1)")
-        st.markdown("**🚀 啟動時機**：放量突破關鍵壓力或回測支撐成功時。\n**動作**：買進低價位 Call + 賣出高一階 Call。\n**成功指標**：Delta 隨價格上升而增加。")
+        st.markdown("""
+        **🚀 啟動時機**
+        放量突破關鍵壓力或回測支撐成功時。
+
+        **動作**
+        買進 **低價位 Call** + 賣出 **高一階 Call** (**多頭價差**)。
+
+        **成功指標**
+        股價站穩成本區，$\Delta$ (Delta) 隨價格上升而穩定增加。
+
+        **❌ 失敗判定**
+        2 交易日橫盤或跌破支撐 / 總損失超過 3 點。
+        """)
+        
     with col_step2:
         st.markdown("### 第二步：動能加碼 (Rule 2)")
-        st.markdown("**🚀 啟動時機**：價差浮盈且 IV 擴張。\n**動作**：加買更高一階 Call。\n**成功指標**：部位因波動迅速膨脹 (水結成冰)。")
+        st.markdown("""
+        **🚀 啟動時機**
+        當價差已產生「浮盈」，且股價衝向賣出價位時。
+
+        **動作**
+        加買 **更高一階的 Call**。
+
+        **成功指標**
+        IV 顯著擴張（**水結成冰**），部位因波動迅速膨脹。
+
+        **❌ 失敗判定**
+        動能衰竭或 IV 下降（冰塊融化）。
+        """)
+        
     with col_step3:
         st.markdown("### 第三步：轉化蝴蝶 (退出方案)")
-        st.markdown("**🚀 啟動時機**：股價強勢漲破加碼價，過熱訊號出現。\n**動作**：賣出中間價位 Call 鎖定負成本。\n**成功指標**：轉為蝴蝶型態。")
+        st.markdown("""
+        **🚀 啟動時機**
+        股價強勢漲破加碼價，且市場出現過熱訊號時。
+
+        **動作**
+        **再加賣一張中間價位的 Call** (總計賣出兩張)。
+
+        **成功指標**
+        型態轉為 **蝴蝶型態 (+1/-2/+1)**，達成負成本。
+
+        **❌ 失敗判定**
+        爆量不漲或價格遠超最高階。
+        """)
+
     st.info("💡 **核心注意事項**：Step 2 重點在於 IV 擴張。只有在部位已「證明你是對的」時才能執行 Rule 2 加碼。")
 
 st.markdown("---")
@@ -84,7 +132,7 @@ st.sidebar.subheader("🧠 2. 核心策略")
 settings = {}
 
 # A. 霸道模式
-enable_box_breakout = st.sidebar.checkbox("📦 啟動：箱型/VCP 霸道模式", value=False, key='box_mode_key')
+enable_box_breakout = st.sidebar.checkbox("📦 啟動：箱型/VCP 霸道模式", value=False, key='box_mode_key', on_change=sync_logic_state)
 settings['enable_box_breakout'] = enable_box_breakout
 
 if enable_box_breakout:
@@ -98,11 +146,12 @@ if enable_box_breakout:
             settings['auto_flag_mode'] = auto_flag_mode
             settings['box_tightness'] = 100 if auto_flag_mode else st.slider("寬度限制 (%)", 10, 50, 25)
         else:
+            st.caption("👉 系統將自動尋找最佳週期 (12W~52W)")
             settings['box_weeks'] = 52; settings['auto_flag_mode'] = True; settings['box_tightness'] = 100
 else:
     settings['enable_full_auto_vcp'] = False; settings['box_weeks'] = 52; settings['auto_flag_mode'] = False; settings['box_tightness'] = 25
 
-# 【新增】B. 落水狗反彈模式
+# B. 落水狗反彈模式
 enable_reversal_mode = st.sidebar.checkbox("🌊 啟動：落水狗反彈 (MA60下彎 + MA5金叉)", value=False, key='reversal_mode_key')
 settings['enable_reversal_mode'] = enable_reversal_mode
 
@@ -124,7 +173,6 @@ else:
 st.sidebar.divider()
 
 st.sidebar.subheader("🛡️ 3. 趨勢與濾網")
-# 如果開啟落水狗模式，強制關閉日線MA60向上的檢查，因為這模式就是要找MA60向下的
 default_ma60_up = False if enable_reversal_mode else True
 
 col_t1, col_t2 = st.sidebar.columns(2)
@@ -134,7 +182,7 @@ with col_t1:
 with col_t2:
     settings['check_ma60_strong_trend'] = st.checkbox("週趨勢強勢", value=False if enable_reversal_mode else True)
 
-ignition_mode = st.sidebar.radio("動能點火週期:", ["🚫 不啟用", "⚡ 4H 點火", "🚀 週線點火"], index=0, horizontal=True, key="ignition_mode_key")
+ignition_mode = st.sidebar.radio("動能點火週期:", ["🚫 不啟用", "⚡ 4H 點火", "🚀 週線點火"], index=0, horizontal=True, key="ignition_mode_key", on_change=sync_logic_state)
 settings['ignition_mode'] = ignition_mode
 
 with st.sidebar.expander("⚙️ 進階參數", expanded=False):
@@ -199,7 +247,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"周線圖錯誤: {e}")
 
-    with tab2: # 日線 (新增 MA5)
+    with tab2: # 日線
         try:
             df = stock.history(period="5y")
             if len(df) > 0:
@@ -208,7 +256,6 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 fig = go.Figure([
                     go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='日K'),
                     go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2)),
-                    # 增加 MA5 顯示 (只在落水狗模式開啟時，或預設都顯示)
                     go.Scatter(x=df.index, y=df['MA5'], mode='lines', name='MA5', line=dict(color='cyan', width=1))
                 ])
                 fig.update_layout(title=f"  {symbol} 日線", shapes=shapes_common, annotations=annotations_common, **layout_common)
@@ -235,7 +282,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"4H 圖錯誤: {e}")
 
-# --- 6. 核心運算 (新增落水狗邏輯) ---
+# --- 6. 核心運算 ---
 def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
     def reject(reason): 
         return {"type": "error", "代號": symbol, "原因": reason} if debug else None
@@ -253,7 +300,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
         hv_rank_val = ((vol_30d.iloc[-1] - vol_30d.min()) / (vol_30d.max() - vol_30d.min())) * 100
         ma60_4h_val, dist_pct_val = 0, 0
         final_box_weeks = 0 
-        ma5_cross_days_str = None # 落水狗模式專用
+        ma5_cross_days_str = None
 
         # --- A. 霸道模式 (箱型) ---
         if s['enable_box_breakout']:
@@ -288,6 +335,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             
             if not found_vcp: return reject("不符合 VCP/箱型型態")
             
+            # 【修復】這裡補上 4H 資料抓取，讓列表顯示數值
             try:
                 df_1h = stock.history(period="1y", interval="1h")
                 if len(df_1h) > 200:
@@ -297,7 +345,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
                     dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
             except: pass
 
-        # --- B. 落水狗反彈模式 (新增) ---
+        # --- B. 落水狗反彈模式 ---
         elif s['enable_reversal_mode']:
             df_daily_2y['MA5'] = df_daily_2y['Close'].rolling(5).mean()
             df_daily_2y['MA60'] = df_daily_2y['Close'].rolling(60).mean()
@@ -307,32 +355,38 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             prev_20 = df_daily_2y.iloc[-20]
             prev_40 = df_daily_2y.iloc[-40]
 
-            # 1. 檢查 MA60 下彎趨勢 (現在 < 10天前 < 20天前 < 40天前)
             if not (curr['MA60'] < prev_10['MA60'] < prev_20['MA60'] < prev_40['MA60']):
                 return reject("MA60 沒有呈現持續下滑趨勢")
             
-            # 2. 檢查目前是否 MA5 > MA60 (金叉狀態)
             if not (curr['MA5'] > curr['MA60']):
                 return reject("目前 MA5 尚未突破 MA60")
                 
-            # 3. 尋找突破點 (最近 15 天內)
             days_since_cross = -1
             for i in range(1, 16):
                 idx = -1 - i
                 row = df_daily_2y.iloc[idx]
-                if row['MA5'] <= row['MA60']: # 找到交叉前的那一天
+                if row['MA5'] <= row['MA60']: 
                     days_since_cross = i
                     break
             
             if days_since_cross == -1:
-                return reject("未在最近 15 天內發現黃金交叉點 (可能早已突破)")
+                return reject("未在最近 15 天內發現黃金交叉點")
             
             ma5_cross_days_str = f"已突破 {days_since_cross} 天" if days_since_cross > 0 else "剛突破"
             
-            # 輔助計算
             week_vol = log_ret.tail(5).std()*np.sqrt(5)*100 if len(log_ret)>=5 else 0
             box_str = f"±{round(curr_price*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
+
+            # 【修復】這裡補上 4H 資料抓取，讓列表顯示數值
+            try:
+                df_1h = stock.history(period="1y", interval="1h")
+                if len(df_1h) > 200:
+                    df_4h = df_1h.resample('4h').agg({'Close':'last'}).dropna()
+                    df_4h['MA60'] = df_4h['Close'].rolling(60).mean()
+                    ma60_4h_val = df_4h['MA60'].iloc[-1]
+                    dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
+            except: pass
 
         # --- C. 幽靈模式 (標準) ---
         else:
@@ -383,7 +437,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             box_str = f"±{round(df_daily_2y['Close'].iloc[-1]*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
 
-        # --- 期權運算 (累積加總) ---
+        # --- 期權運算 ---
         atm_oi = "N/A"; c_max_strike = "N/A"; p_max_strike = "N/A"
         call_oi_map = {}; put_oi_map = {}
         try:
@@ -423,7 +477,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             "type": "success",
             "代號": symbol, "HV Rank": round(hv_rank_val,1), 
             "週波動%": box_amp_str, "預期變動$": box_str,
-            "MA5突破天數": ma5_cross_days_str, # 落水狗欄位
+            "MA5突破天數": ma5_cross_days_str, 
             "現價": round(curr_price,2), 
             "4H 60MA": round(ma60_4h_val,2) if ma60_4h_val!=0 else "N/A",
             "4H MA60 乖離率": f"{round(dist_pct_val,2)}%" if ma60_4h_val!=0 else "N/A",
