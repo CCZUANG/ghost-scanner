@@ -51,7 +51,7 @@ def sync_logic_state():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 (美化版卡片設計) ---
+# --- 2. 核心策略導引區 ---
 with st.expander("📖 幽靈策略：動態蝴蝶演化三部曲 (點擊展開)", expanded=False):
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -61,7 +61,6 @@ with st.expander("📖 幽靈策略：動態蝴蝶演化三部曲 (點擊展開)
             st.info("**🚀 啟動**：突破壓力 / 回測支撐")
             st.markdown("**🛒 動作**：\n- Buy 低價 Call\n- Sell 高價 Call")
             st.success("**✅ 成功**：Delta 隨股價增加")
-            st.error("**❌ 失敗**：橫盤 > 2天 或 跌破支撐")
     with c2:
         with st.container(border=True):
             st.markdown("### ❄️ Step 2: 加碼")
@@ -69,7 +68,6 @@ with st.expander("📖 幽靈策略：動態蝴蝶演化三部曲 (點擊展開)
             st.info("**🚀 啟動**：價差浮盈 + **IV 膨脹**")
             st.markdown("**🛒 動作**：\n- 加買 更高階 Call")
             st.success("**✅ 成功**：部位價值隨波動暴增")
-            st.error("**❌ 失敗**：動能消失 / IV 萎縮")
     with c3:
         with st.container(border=True):
             st.markdown("### 🦋 Step 3: 鎖利")
@@ -77,7 +75,6 @@ with st.expander("📖 幽靈策略：動態蝴蝶演化三部曲 (點擊展開)
             st.info("**🚀 啟動**：過熱 / 乖離率過大")
             st.markdown("**🛒 動作**：\n- 賣出 中間價 Call\n- 形成 (+1 / -2 / +1)")
             st.success("**✅ 成功**：鎖定 **負成本** (無風險)")
-            st.error("**❌ 失敗**：股價遠超最高履約價")
     st.warning("💡 **核心心法**：Step 2 的關鍵是 **「IV (隱含波動率) 的擴張」**。")
 
 st.markdown("---")
@@ -171,7 +168,7 @@ def translate_industry(eng):
         if k in eng.lower(): return v
     return eng
 
-# --- 5. 繪圖函數 (優化版：整數索引+標籤分流) ---
+# --- 5. 繪圖函數 ---
 def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kwargs):
     stock = yf.Ticker(symbol)
     tab1, tab2, tab3 = st.tabs(["🗓️ 周線", "📅 日線", "⏱️ 4H"])
@@ -211,17 +208,19 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                     last_n = df.iloc[-(vcp_weeks+1):-1]
                     if len(last_n) > 0:
                         box_shapes.append(dict(type="rect", x0=last_n.index[0], y0=last_n['Low'].min(), x1=last_n.index[-1], y1=last_n['High'].max(), line=dict(width=0), fillcolor="rgba(30, 144, 255, 0.25)"))
-                fig = go.Figure([go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
-                                 go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))])
+                fig = go.Figure([
+                    go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='周K'),
+                    go.Scatter(x=df.index, y=df['MA60'], mode='lines', name='MA60', line=dict(color='orange', width=2))
+                ])
                 fig.update_layout(title=f"  {symbol} 周線", shapes=shapes_common + box_shapes, annotations=annotations_common, **layout_common)
                 if len(df) > 150: fig.update_xaxes(range=[df.index[-150], df.index[-1]])
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"周線圖錯誤: {e}")
 
-    with tab2: # 日線 (整數索引修復)
+    with tab2: # 日線
         try:
             df = stock.history(period="5y")
-            df = df.dropna(subset=['Close']) # 清理數據
+            df = df.dropna(subset=['Close'])
             if len(df) > 0:
                 df['MA5'] = df['Close'].rolling(5).mean()
                 df['MA20'] = df['Close'].rolling(20).mean()
@@ -243,7 +242,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"日線圖錯誤: {e}")
 
-    with tab3: # 4H (整數索引)
+    with tab3: # 4H
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
@@ -262,7 +261,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"4H 圖錯誤: {e}")
 
-# --- 6. 核心運算 (加入 ADX 與乖離濾網) ---
+# --- 6. 核心運算 ---
 def calculate_adx(df, period=14):
     try:
         df = df.copy()
@@ -273,7 +272,6 @@ def calculate_adx(df, period=14):
         
         df['DM+'] = np.where((df['High'] - df['High'].shift(1)) > (df['Low'].shift(1) - df['Low']), df['High'] - df['High'].shift(1), 0)
         df['DM+'] = np.where(df['DM+'] < 0, 0, df['DM+'])
-        
         df['DM-'] = np.where((df['Low'].shift(1) - df['Low']) > (df['High'] - df['High'].shift(1)), df['Low'].shift(1) - df['Low'], 0)
         df['DM-'] = np.where(df['DM-'] < 0, 0, df['DM-'])
         
@@ -283,7 +281,6 @@ def calculate_adx(df, period=14):
         
         df['DI+'] = 100 * (df['DM+14'] / df['TR14'])
         df['DI-'] = 100 * (df['DM-14'] / df['TR14'])
-        
         df['DX'] = 100 * abs(df['DI+'] - df['DI-']) / (df['DI+'] + df['DI-'])
         df['ADX'] = df['DX'].rolling(window=period).mean()
         return df['ADX'].iloc[-1], df['DI+'].iloc[-1], df['DI-'].iloc[-1]
@@ -307,7 +304,10 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
         final_box_weeks = 0 
         status_note = ""
         sort_val = 0
-        custom_column_val = None # 用於顯示特定模式的數值 (ADX or 天數)
+        
+        # 專屬欄位：預設為 None
+        val_ma5_days = None 
+        val_trend_strength = None
 
         # --- A. 霸道模式 (箱型) ---
         if s['enable_box_breakout']:
@@ -367,14 +367,14 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             
             if days_since_cross == -1: return reject("未在最近 15 天內發現黃金交叉點")
             
-            custom_column_val = f"已突破 {days_since_cross} 天"
+            val_ma5_days = f"已突破 {days_since_cross} 天" if days_since_cross > 0 else "剛突破"
             sort_val = days_since_cross
             
             week_vol = log_ret.tail(5).std()*np.sqrt(5)*100 if len(log_ret)>=5 else 0
             box_str = f"±{round(curr_price*(week_vol/100),2)}"
             box_amp_str = round(week_vol, 2)
 
-        # --- C. 趨勢特快車 (強化版：ADX + 乖離濾網) ---
+        # --- C. 趨勢特快車 (強化版) ---
         elif s['enable_trend_mode']:
             df_daily_2y['MA5'] = df_daily_2y['Close'].rolling(5).mean()
             df_daily_2y['MA20'] = df_daily_2y['Close'].rolling(20).mean()
@@ -383,28 +383,23 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             
             c = df_daily_2y.iloc[-1]
             
-            # 1. 嚴格多頭排列 (連續 3 天)
+            # 1. 嚴格多頭排列
             for i in range(1, 4):
                 h = df_daily_2y.iloc[-i]
                 if not (h['Close'] > h['MA5'] > h['MA20'] > h['MA60'] > h['MA120']):
                     return reject("未維持至少3天完全多頭排列")
 
-            # 2. 扇形發散 (乖離率門檻提高：過濾黏滯股)
-            # MA5 必須高於 MA20 至少 2% (大幅提高門檻，過濾 KMI 這種)
-            if not (c['MA5'] > c['MA20'] * 1.02):
-                return reject(f"MA5/MA20 發散不足 ({round((c['MA5']/c['MA20']-1)*100,1)}% < 2%)")
-            
-            # MA20 必須高於 MA60 至少 3%
-            if not (c['MA20'] > c['MA60'] * 1.03):
-                return reject(f"MA20/MA60 發散不足 ({round((c['MA20']/c['MA60']-1)*100,1)}% < 3%)")
+            # 2. 扇形發散
+            if not (c['MA5'] > c['MA20'] * 1.02): return reject(f"MA5/MA20 發散不足 ({round((c['MA5']/c['MA20']-1)*100,1)}% < 2%)")
+            if not (c['MA20'] > c['MA60'] * 1.03): return reject(f"MA20/MA60 發散不足 ({round((c['MA20']/c['MA60']-1)*100,1)}% < 3%)")
 
-            # 3. ADX 動能濾網 (關鍵新增)
+            # 3. ADX 濾網
             adx, di_plus, di_minus = calculate_adx(df_daily_2y)
             if adx < 25: return reject(f"ADX 趨勢強度不足 ({round(adx)} < 25)")
             if di_plus <= di_minus: return reject("空方力道仍強 (DI- > DI+)")
 
             status_note = "🚀 噴出中"
-            custom_column_val = f"ADX {round(adx)}" # 顯示 ADX 強度
+            val_trend_strength = f"ADX {round(adx)}"
             sort_val = adx 
 
         # --- D. 幽靈模式 (標準) ---
@@ -452,7 +447,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             status_note = box_amp_str
             sort_val = -abs(dist_pct_val)
 
-        # --- 補齊 4H 資料 (所有模式共用) ---
+        # --- 補齊 4H 資料 (所有模式共用，確保數值不為 N/A) ---
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 200:
@@ -501,7 +496,8 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             "代號": symbol, "HV Rank": round(hv_rank_val,1), 
             "狀態/波動": status_note, 
             "_sort_val": sort_val, 
-            "MA5/ADX": custom_column_val, # 動態欄位
+            "MA5突破天數": val_ma5_days, 
+            "趨勢強度": val_trend_strength,
             "現價": round(curr_price,2), 
             "4H 60MA": round(ma60_4h_val,2) if ma60_4h_val!=0 else "N/A",
             "4H MA60 乖離率": f"{round(dist_pct_val,2)}%" if ma60_4h_val!=0 else "N/A",
@@ -584,11 +580,22 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df_display = df.copy()
     df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
 
-    st.dataframe(df_display, column_config={
+    # 動態顯示欄位
+    hide_cols = ["_sort_val", "_sort_score", "_vcp_weeks"]
+    if settings.get('enable_reversal_mode'): hide_cols.append("趨勢強度")
+    elif settings.get('enable_trend_mode'): hide_cols.append("MA5突破天數")
+    else: 
+        hide_cols.append("MA5突破天數")
+        hide_cols.append("趨勢強度")
+
+    # 建立設定字典，將要隱藏的欄位設為 None
+    col_config = {
         "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"),
         "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍"),
-        "_sort_val": None, "_sort_score": None, "_vcp_weeks": None
-    }, hide_index=True, use_container_width=True)
+    }
+    for c in hide_cols: col_config[c] = None
+
+    st.dataframe(df_display, column_config=col_config, hide_index=True, use_container_width=True)
     
     st.markdown("---")
     st.subheader("🕯️ K 線檢視")
