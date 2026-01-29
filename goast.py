@@ -220,7 +220,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"周線圖錯誤: {e}")
 
-    with tab2: # 日線 (整數索引)
+    with tab2: # 日線 (整數索引修復)
         try:
             df = stock.history(period="5y")
             df = df.dropna(subset=['Close'])
@@ -465,7 +465,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
                 dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
         except: pass
 
-        # --- 期權運算 ---
+        # --- 期權運算 (移除 OI 下限卡控) ---
         atm_oi = "N/A"; c_max_strike = "N/A"; p_max_strike = "N/A"
         call_oi_map = {}; put_oi_map = {}
         try:
@@ -477,7 +477,9 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
                 tot_atm_oi = chain.calls[chain.calls['strike']==strike_atm]['openInterest'].sum() + \
                              chain.puts[chain.puts['strike']==strike_atm]['openInterest'].sum()
                 atm_oi = f"{int(tot_atm_oi):,}"
-                if tot_atm_oi < 1000: return reject(f"期權流動性不足 OI={tot_atm_oi}")
+                
+                # 【修改處】移除 return reject，只保留計算
+                # if tot_atm_oi < 1000: return reject(f"期權流動性不足 OI={tot_atm_oi}") 
 
                 for d in opts[:6]:
                     try:
