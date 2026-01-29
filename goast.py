@@ -572,3 +572,45 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     
     # 智慧排序
     if settings.get('enable_reversal_mode'):
+        df = df.sort_values(by="_sort_val", ascending=True) 
+    elif settings.get('enable_trend_mode'):
+        df = df.sort_values(by="_sort_val", ascending=False)
+    else:
+        if "_sort_val" in df.columns: df = df.sort_values(by="_sort_val", ascending=True)
+
+    st.subheader("📋 策略篩選列表")
+    
+    df_display = df.copy()
+    df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
+
+    # 動態顯示/隱藏欄位 (還原清爽列表)
+    hide_cols = ["_sort_val", "_sort_score", "_vcp_weeks"]
+    if settings.get('enable_reversal_mode'):
+        # 落水狗：顯示天數，隱藏無用的欄位
+        pass 
+    elif settings.get('enable_trend_mode'):
+        # 特快車：隱藏天數 (因為都是強勢股)，ADX 已經在狀態欄了
+        hide_cols.append("MA5突破天數") 
+    else:
+        # 幽靈/霸道：隱藏所有特殊欄位
+        hide_cols.append("MA5突破天數")
+
+    col_config = {
+        "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"),
+        "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍"),
+    }
+    for c in hide_cols: col_config[c] = None
+
+    st.dataframe(df_display, column_config=col_config, hide_index=True, use_container_width=True)
+    
+    st.markdown("---")
+    st.subheader("🕯️ K 線檢視")
+    
+    options = df.apply(lambda x: f"{x['代號']} - {x['產業']}", axis=1).tolist()
+    if options:
+        sel = st.pills("👉 點擊標的", options, selection_mode="single")
+        if sel:
+            target = sel.split(" - ")[0]
+            row = df[df['代號'] == target].iloc[0]
+            plot_interactive_chart(target, row['全Call大量'], row['全Put大量'], row.get('_vcp_weeks', 0))
+    else: st.write("查無標的")
