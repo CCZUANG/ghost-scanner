@@ -51,7 +51,7 @@ def sync_logic_state():
 st.title("👻 幽靈策略掃描器")
 st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
 
-# --- 2. 核心策略導引區 ---
+# --- 2. 核心策略導引區 (美化版卡片設計) ---
 with st.expander("📖 幽靈策略：動態蝴蝶演化三部曲 (點擊展開)", expanded=False):
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -61,6 +61,7 @@ with st.expander("📖 幽靈策略：動態蝴蝶演化三部曲 (點擊展開)
             st.info("**🚀 啟動**：突破壓力 / 回測支撐")
             st.markdown("**🛒 動作**：\n- Buy 低價 Call\n- Sell 高價 Call")
             st.success("**✅ 成功**：Delta 隨股價增加")
+            st.error("**❌ 失敗**：橫盤 > 2天 或 跌破支撐")
     with c2:
         with st.container(border=True):
             st.markdown("### ❄️ Step 2: 加碼")
@@ -68,6 +69,7 @@ with st.expander("📖 幽靈策略：動態蝴蝶演化三部曲 (點擊展開)
             st.info("**🚀 啟動**：價差浮盈 + **IV 膨脹**")
             st.markdown("**🛒 動作**：\n- 加買 更高階 Call")
             st.success("**✅ 成功**：部位價值隨波動暴增")
+            st.error("**❌ 失敗**：動能消失 / IV 萎縮")
     with c3:
         with st.container(border=True):
             st.markdown("### 🦋 Step 3: 鎖利")
@@ -75,6 +77,7 @@ with st.expander("📖 幽靈策略：動態蝴蝶演化三部曲 (點擊展開)
             st.info("**🚀 啟動**：過熱 / 乖離率過大")
             st.markdown("**🛒 動作**：\n- 賣出 中間價 Call\n- 形成 (+1 / -2 / +1)")
             st.success("**✅ 成功**：鎖定 **負成本** (無風險)")
+            st.error("**❌ 失敗**：股價遠超最高履約價")
     st.warning("💡 **核心心法**：Step 2 的關鍵是 **「IV (隱含波動率) 的擴張」**。")
 
 st.markdown("---")
@@ -217,7 +220,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"周線圖錯誤: {e}")
 
-    with tab2: # 日線
+    with tab2: # 日線 (整數索引)
         try:
             df = stock.history(period="5y")
             df = df.dropna(subset=['Close'])
@@ -242,7 +245,7 @@ def plot_interactive_chart(symbol, call_wall, put_wall, vcp_weeks=0, *args, **kw
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"日線圖錯誤: {e}")
 
-    with tab3: # 4H
+    with tab3: # 4H (整數索引)
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 0:
@@ -272,6 +275,7 @@ def calculate_adx(df, period=14):
         
         df['DM+'] = np.where((df['High'] - df['High'].shift(1)) > (df['Low'].shift(1) - df['Low']), df['High'] - df['High'].shift(1), 0)
         df['DM+'] = np.where(df['DM+'] < 0, 0, df['DM+'])
+        
         df['DM-'] = np.where((df['Low'].shift(1) - df['Low']) > (df['High'] - df['High'].shift(1)), df['Low'].shift(1) - df['Low'], 0)
         df['DM-'] = np.where(df['DM-'] < 0, 0, df['DM-'])
         
@@ -305,7 +309,11 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
         status_note = ""
         sort_val = 0
         
-        # 專屬欄位：預設為 None
+        # 預期週波幅計算 (所有模式共用)
+        week_vol = log_ret.tail(5).std() * np.sqrt(5) * 100 if len(log_ret) >= 5 else 0
+        box_str = f"±{round(curr_price * (week_vol / 100), 2)}"
+        
+        # 專屬欄位
         val_ma5_days = None 
         val_trend_strength = None
 
@@ -317,7 +325,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             if avg_vol < vol_threshold * 2: return reject(f"週均量不足 (需 > {int(vol_threshold*2)})")
             
             candidate_periods = [52, 40, 30, 20, 12] if s['enable_full_auto_vcp'] else [s['box_weeks']]
-            found_vcp = False; box_str = ""; box_amp_str = ""
+            found_vcp = False; box_amp_str = ""
             current_week = df_wk.iloc[-1]
             
             for p in candidate_periods:
@@ -333,12 +341,12 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
                     if new_r > old_r * 0.85: continue 
                     if current_week['Close'] < box_high * 0.90: continue 
                     if current_week['Close'] < box_high * 0.98: continue 
-                    found_vcp = True; final_box_weeks = p; box_str = f"突破 {round(box_high, 2)}"; box_amp_str = f"VCP{p}W"; break
+                    found_vcp = True; final_box_weeks = p; box_amp_str = f"VCP{p}W"; break
                 else: 
                     amp = (box_high - box_low) / box_low * 100
                     if amp > s['box_tightness']: continue
                     if current_week['Close'] >= box_high * 0.99:
-                        found_vcp = True; final_box_weeks = p; box_str = f"突破 {round(box_high, 2)}"; box_amp_str = f"{round(amp,1)}%"; break
+                        found_vcp = True; final_box_weeks = p; box_amp_str = f"{round(amp,1)}%"; break
             
             if not found_vcp: return reject("不符合 VCP/箱型型態")
             status_note = box_amp_str
@@ -370,11 +378,9 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             val_ma5_days = f"已突破 {days_since_cross} 天" if days_since_cross > 0 else "剛突破"
             sort_val = days_since_cross
             
-            week_vol = log_ret.tail(5).std()*np.sqrt(5)*100 if len(log_ret)>=5 else 0
-            box_str = f"±{round(curr_price*(week_vol/100),2)}"
-            box_amp_str = round(week_vol, 2)
+            status_note = "反彈確認"
 
-        # --- C. 趨勢特快車 (強化版) ---
+        # --- C. 趨勢特快車 (魔鬼濾網版 V6.0) ---
         elif s['enable_trend_mode']:
             df_daily_2y['MA5'] = df_daily_2y['Close'].rolling(5).mean()
             df_daily_2y['MA20'] = df_daily_2y['Close'].rolling(20).mean()
@@ -389,16 +395,21 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
                 if not (h['Close'] > h['MA5'] > h['MA20'] > h['MA60'] > h['MA120']):
                     return reject("未維持至少3天完全多頭排列")
 
-            # 2. 扇形發散
+            # 2. 扇形發散 (乖離率門檻大幅提高：過濾黏滯股)
             if not (c['MA5'] > c['MA20'] * 1.02): return reject(f"MA5/MA20 發散不足 ({round((c['MA5']/c['MA20']-1)*100,1)}% < 2%)")
-            if not (c['MA20'] > c['MA60'] * 1.03): return reject(f"MA20/MA60 發散不足 ({round((c['MA20']/c['MA60']-1)*100,1)}% < 3%)")
+            
+            # MA20 必須高於 MA60 至少 5% (魔鬼門檻)
+            if not (c['MA20'] > c['MA60'] * 1.05): return reject(f"MA20/MA60 發散不足 ({round((c['MA20']/c['MA60']-1)*100,1)}% < 5%)")
 
-            # 3. ADX 濾網
+            # 3. 波動率檢查 (死魚股過濾)
+            if week_vol < 2.0: return reject(f"波動太低 (週波幅 {round(week_vol,1)}% < 2%)")
+
+            # 4. ADX 強度濾網 (>30)
             adx, di_plus, di_minus = calculate_adx(df_daily_2y)
-            if adx < 25: return reject(f"ADX 趨勢強度不足 ({round(adx)} < 25)")
+            if adx < 30: return reject(f"ADX 趨勢強度不足 ({round(adx)} < 30)")
             if di_plus <= di_minus: return reject("空方力道仍強 (DI- > DI+)")
 
-            status_note = "🚀 噴出中"
+            status_note = "🚀 強勢噴出"
             val_trend_strength = f"ADX {round(adx)}"
             sort_val = adx 
 
@@ -441,13 +452,10 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
                     if a < s['min_curvature']: return reject("U型失敗 (彎曲度不足)")
                 except: return reject("U型計算錯誤")
             
-            week_vol = log_ret.tail(5).std()*np.sqrt(5)*100 if len(log_ret)>=5 else 0
-            box_str = f"±{round(curr_price*(week_vol/100),2)}"
-            box_amp_str = round(week_vol, 2)
-            status_note = box_amp_str
+            status_note = str(round(week_vol, 2)) # 幽靈模式顯示週波動
             sort_val = -abs(dist_pct_val)
 
-        # --- 補齊 4H 資料 (所有模式共用，確保數值不為 N/A) ---
+        # --- 補齊 4H 資料 (確保所有模式都有數值) ---
         try:
             df_1h = stock.history(period="1y", interval="1h")
             if len(df_1h) > 200:
@@ -457,7 +465,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
                 dist_pct_val = ((df_4h['Close'].iloc[-1]-ma60_4h_val)/ma60_4h_val)*100
         except: pass
 
-        # --- 期權運算 (累積加總) ---
+        # --- 期權運算 ---
         atm_oi = "N/A"; c_max_strike = "N/A"; p_max_strike = "N/A"
         call_oi_map = {}; put_oi_map = {}
         try:
@@ -498,6 +506,7 @@ def get_ghost_metrics(symbol, vol_threshold, s, debug=False):
             "_sort_val": sort_val, 
             "MA5突破天數": val_ma5_days, 
             "趨勢強度": val_trend_strength,
+            "預期週波幅": box_str, # 新增欄位
             "現價": round(curr_price,2), 
             "4H 60MA": round(ma60_4h_val,2) if ma60_4h_val!=0 else "N/A",
             "4H MA60 乖離率": f"{round(dist_pct_val,2)}%" if ma60_4h_val!=0 else "N/A",
@@ -569,9 +578,9 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     
     # 智慧排序
     if settings.get('enable_reversal_mode'):
-        df = df.sort_values(by="_sort_val", ascending=True) # 天數少在前
+        df = df.sort_values(by="_sort_val", ascending=True) 
     elif settings.get('enable_trend_mode'):
-        df = df.sort_values(by="_sort_val", ascending=False) # ADX 大在前
+        df = df.sort_values(by="_sort_val", ascending=False)
     else:
         if "_sort_val" in df.columns: df = df.sort_values(by="_sort_val", ascending=True)
 
@@ -580,15 +589,16 @@ if 'scan_results' in st.session_state and st.session_state['scan_results']:
     df_display = df.copy()
     df_display["代號"] = df_display["代號"].apply(lambda x: f"https://finance.yahoo.com/quote/{x}/key-statistics")
 
-    # 動態顯示欄位
+    # 動態顯示/隱藏欄位 (修復版)
     hide_cols = ["_sort_val", "_sort_score", "_vcp_weeks"]
-    if settings.get('enable_reversal_mode'): hide_cols.append("趨勢強度")
-    elif settings.get('enable_trend_mode'): hide_cols.append("MA5突破天數")
-    else: 
+    if settings.get('enable_reversal_mode'):
+        hide_cols.append("趨勢強度") # 落水狗隱藏趨勢強度
+    elif settings.get('enable_trend_mode'):
+        hide_cols.append("MA5突破天數") # 趨勢車隱藏突破天數
+    else:
         hide_cols.append("MA5突破天數")
         hide_cols.append("趨勢強度")
 
-    # 建立設定字典，將要隱藏的欄位設為 None
     col_config = {
         "代號": st.column_config.LinkColumn("代號", display_text="https://finance\\.yahoo\\.com/quote/(.*?)/key-statistics"),
         "題材搜尋": st.column_config.LinkColumn("題材", display_text="🔍"),
