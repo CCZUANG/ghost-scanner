@@ -6,7 +6,7 @@ import requests
 import plotly.graph_objects as go
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta # 引入 timedelta 用於時間加減
 
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="幽靈策略掃描器 (2026)", page_icon="👻", layout="wide")
@@ -49,7 +49,10 @@ def sync_logic_state():
     pass
 
 st.title("👻 幽靈策略掃描器")
-st.caption(f"📅 台灣時間：{datetime.now().strftime('%Y-%m-%d %H:%M')} (2026年)")
+
+# 【時間修正】取得 UTC 時間並手動加 8 小時轉為台灣時間
+tw_time = datetime.utcnow() + timedelta(hours=8)
+st.caption(f"📅 台灣時間：{tw_time.strftime('%Y-%m-%d %H:%M')} (2026年)")
 
 # --- 2. 核心策略導引區 (美化版卡片設計) ---
 with st.expander("📖 幽靈策略：動態蝴蝶演化三部曲 (點擊展開)", expanded=False):
